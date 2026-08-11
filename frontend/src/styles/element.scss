@@ -438,17 +438,38 @@ $tabs-bg-color: #f5f7fa;
 		height: 100%;
 		.el-tabs__header-vertical {
 			margin: 0 !important;
+			width: 42px;
+			flex: 0 0 42px;
+			padding: 4px 0;
+			box-sizing: border-box;
 			background-color: $table-th-bg-color;
+		}
+		.el-tabs__nav,
+		.el-tabs__nav-scroll {
+			width: 100%;
 		}
 		.el-tabs__active-bar {
 			display: none;
 		}
 		.el-tabs__item {
-			writing-mode: vertical-lr; /*从左向右 从右向左是 writing-mode: vertical-rl;*/
-			// writing-mode: tb-lr; /*IE浏览器的从左向右 从右向左是 writing-mode: tb-rl；*/
+			width: 42px;
+			min-height: 8rem;
+			margin-bottom: 4px;
+			box-sizing: border-box;
+			writing-mode: vertical-rl;
+			text-orientation: upright;
 			height: auto !important;
-			line-height: inherit !important;
-			padding: 8px 5px;
+			line-height: 1.2 !important;
+			padding: 12px 0;
+			justify-content: center;
+			letter-spacing: 3px;
+			font-size: 1.2rem;
+			font-weight: 500;
+			transition: color 0.16s ease, background-color 0.16s ease;
+
+			&:hover {
+				background-color: var(--el-fill-color-light);
+			}
 		}
 		.el-tabs__nav-wrap.is-right::after,
 		.el-tabs__nav-wrap.is-left::after {
@@ -463,6 +484,11 @@ $tabs-bg-color: #f5f7fa;
 			}
 		}
 		&.el-tabs--right {
+			.el-tabs__item.is-active {
+				border-radius: 6px 0 0 6px;
+				background-color: var(--el-color-primary-light-9);
+				box-shadow: inset -3px 0 0 var(--el-color-primary);
+			}
 			.el-tabs__content {
 				.el-tab-pane {
 					border-left: 1px solid $border-color;
@@ -470,6 +496,11 @@ $tabs-bg-color: #f5f7fa;
 			}
 		}
 		&.el-tabs--left {
+			.el-tabs__item.is-active {
+				border-radius: 0 6px 6px 0;
+				background-color: var(--el-color-primary-light-9);
+				box-shadow: inset 3px 0 0 var(--el-color-primary);
+			}
 			.el-tabs__content {
 				.el-tab-pane {
 					border-right: 1px solid $border-color;

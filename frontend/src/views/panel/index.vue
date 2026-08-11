@@ -63,8 +63,9 @@
 						<span class="panel-control__label">{{ pub.lang('排序') }}</span>
 						<div ref="sortSegmentRef" class="panel-segmented flex items-center">
 							<el-radio-group
-								v-model="sortMode"
-								class="panel-segmented__group">
+								:model-value="sortMode"
+								class="panel-segmented__group"
+								@change="changeSortMode">
 								<span
 									class="panel-segmented__indicator"
 									:style="sortIndicatorStyle" />
@@ -109,14 +110,28 @@
 					</div>
 				</div>
 			</div>
-			<div class="panel__content">
+			<div ref="panelContentRef" class="panel__content">
 				<el-scrollbar :height="mainHeight - 100">
 					<el-row class="cardList w-full" :gutter="10">
-						<TransitionGroup name="panel-card">
+						<div class="panel-card-group">
 						<el-col
 							v-for="(item, index) in showListArray"
 							:key="item.panel_id"
-							v-memo="[item.panel_id, item.panelInfo.isError, item.device_status, item.current_disk, draggedPanelID]"
+							:data-panel-id="item.panel_id"
+							v-memo="[
+								item.panel_id,
+								item.panelInfo,
+								item.device_status,
+								item.current_disk,
+								item.is_open,
+								item.ov,
+								item.title,
+								item.url,
+								item.is_demo,
+								isShowIP,
+								canDragSort,
+								draggedPanelID === item.panel_id,
+							]"
 							:xs="24"
 							:sm="12"
 							:md="8"
@@ -132,7 +147,9 @@
 							<el-card
 								class="card-panel-item "
 								:class="{
-									isError: item.panelInfo.isError && item.device_status !== 'online',
+									isError:
+										item.device_status === 'offline' ||
+										(item.panelInfo.isError && item.device_status !== 'online'),
 									isWarning: item.panelInfo.isError && item.device_status === 'online',
 									isNoOpen: !item.is_open,
 								}">
@@ -159,9 +176,14 @@
 														>{{ authType[item.ov].name }}</span
 													>
 												</div>
-												<div class="text-[.9rem] text-gray-500 tracking-1px">
-													[{{ getUrlLink(item.url) }}]
-												</div>
+												<button
+													type="button"
+													class="panel-copy-address"
+													:title="pub.lang('复制IP')"
+													@click.stop="copyPanelAddress(item.url)">
+													<span>[{{ getUrlLink(item.url) }}]</span>
+													<el-icon><CopyDocument /></el-icon>
+												</button>
 											</template>
 											<template v-else>
 												<!-- 兼容标题是IP的情况 -->
@@ -174,7 +196,7 @@
 										:class="`panel-device-status--${getDeviceStatusClass(item)}`">
 										<i></i>{{ getDeviceStatusText(item) }}
 									</span>
-									<el-dropdown class="align-right cursor-pointer" trigger="click">
+								<el-dropdown v-if="!item.is_demo" class="align-right cursor-pointer" trigger="click">
 										<el-button :icon="Setting" size="small" class="card-btn-style text-primary" />
 										<template #dropdown>
 											<el-dropdown-menu>
@@ -191,8 +213,9 @@
 													pub.lang('删除')
 												}}</el-dropdown-item>
 											</el-dropdown-menu>
-										</template>
-									</el-dropdown>
+									</template>
+								</el-dropdown>
+								<span v-else class="panel-demo-badge">{{ pub.lang('演示') }}</span>
 									<!-- </div> -->
 								</template>
 								<template v-if="!item.panelInfo.isError">
@@ -277,7 +300,7 @@
 								</template>
 							</el-card>
 						</el-col>
-						</TransitionGroup>
+						</div>
 					</el-row>
 				</el-scrollbar>
 			</div>
@@ -311,7 +334,7 @@ defineOptions({
 	name: 'Home',
 })
 import { usePanelBase } from '@store/panel'
-import { Setting, Refresh, Hide, View, TopRight } from '@element-plus/icons-vue'
+import { Setting, Refresh, Hide, View, TopRight, CopyDocument } from '@element-plus/icons-vue'
 import { useSettingStore } from '@store/setting'
 import { ElMessageBox } from 'element-plus'
 import { useMessage } from '@utils/hooks/message'
@@ -323,7 +346,7 @@ import installResults from './components/AddPanel/installResults.vue'
 import AddGroup from '@views/panel/components/AddGroup/index.vue'
 import White from '@/assets/images/logo-white.svg'
 import LogoGreen from '@/assets/images/logo-green.svg'
-import { pub, getByteUnit } from '@utils/tools'
+import { pub, getByteUnit, copyText } from '@utils/tools'
 import { record_disk, set_panel_sort, type Panel_Params } from './controller'
 import { checkIp } from '@utils/is'
 
@@ -350,7 +373,8 @@ const isActive = ref(false)
 const searchServic = ref('')
 const firstLoad = ref(true)
 const allPanelList = ref([]) as any
-const sortMode = ref<'default' | 'latest' | 'earliest'>('default')
+type SortMode = 'default' | 'latest' | 'earliest'
+const sortMode = ref<SortMode>('default')
 const sortOptions = [
 	{ label: pub.lang('默认排序'), value: 'default' },
 	{ label: pub.lang('最新添加'), value: 'latest' },
@@ -358,8 +382,12 @@ const sortOptions = [
 ]
 const groupSegmentRef = ref<HTMLElement | null>(null)
 const sortSegmentRef = ref<HTMLElement | null>(null)
+const panelContentRef = ref<HTMLElement | null>(null)
 const groupIndicatorStyle = ref<Record<string, string>>({ opacity: '0', width: '0px' })
 const sortIndicatorStyle = ref<Record<string, string>>({ opacity: '0', width: '0px' })
+let sortAnimations: Animation[] = []
+let sortSwitchToken = 0
+let dragAnimations: Animation[] = []
 
 const updateSegmentIndicator = async (
 	segmentRef: typeof groupSegmentRef,
@@ -421,7 +449,10 @@ const getDeviceStatusText = (item: any) => {
 }
 const getDeviceStatusClass = (item: any) => {
 	if (item.device_status === 'online' && item.panelInfo.isError) return 'warning'
-	return item.device_status || 'unknown'
+	if (item.device_status === 'online') return 'online'
+	if (item.device_status === 'offline' || item.panelInfo.isError) return 'offline'
+	if (!item.device_status || item.device_status === 'unknown') return 'checking'
+	return 'unknown'
 }
 
 const isShow = computed(() => {
@@ -434,7 +465,9 @@ const isShow = computed(() => {
 	return status
 })
 
-const canDragSort = computed(() => sortMode.value === 'default' && searchServic.value === '')
+const canDragSort = computed(
+	() => sortMode.value === 'default' && searchServic.value === ''
+)
 const dragHandleTitle = computed(() => {
 	if (sortMode.value !== 'default') return pub.lang('切换到默认排序后可拖动')
 	if (searchServic.value !== '') return pub.lang('清空搜索后可拖动')
@@ -458,6 +491,144 @@ const showListArray = computed(() => {
 	}
 	return list
 })
+const panelByID = computed(
+	() => new Map<number, any>(allPanelList.value.map((item: any) => [item.panel_id, item]))
+)
+
+const clearSortAnimations = () => {
+	sortAnimations.forEach(animation => animation.cancel())
+	sortAnimations = []
+}
+
+const createSortedCardAnimations = () => {
+	const container = panelContentRef.value
+	if (!container) return []
+
+	const containerRect = container.getBoundingClientRect()
+	const animations: Animation[] = []
+	const rows: HTMLElement[][] = []
+	let lastRowTop: number | null = null
+
+	container.querySelectorAll<HTMLElement>('.panel-card-group > .panel-card-col').forEach(card => {
+		const rect = card.getBoundingClientRect()
+		if (
+			rect.bottom <= containerRect.top ||
+			rect.top >= containerRect.bottom ||
+			rect.right <= containerRect.left ||
+			rect.left >= containerRect.right
+		) {
+			return
+		}
+		if (lastRowTop === null || Math.abs(rect.top - lastRowTop) > 2) {
+			rows.push([])
+			lastRowTop = rect.top
+		}
+		rows[rows.length - 1].push(card)
+	})
+
+	let rowStartDelay = 0
+	rows.forEach(row => {
+		row.forEach((card, columnIndex) => {
+			animations.push(
+				card.animate(
+					[
+						{ opacity: 0, transform: 'translate3d(0, 6px, 0)' },
+						{ opacity: 1, transform: 'translate3d(0, 0, 0)' },
+					],
+					{
+						duration: 180,
+						delay: rowStartDelay + columnIndex * 28,
+						easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+						fill: 'both',
+					}
+				)
+			)
+		})
+		rowStartDelay += Math.max(0, row.length - 1) * 28 + 60
+	})
+
+	return animations
+}
+
+const changeSortMode = async (value: unknown) => {
+	if (value !== 'default' && value !== 'latest' && value !== 'earliest') return
+	if (value === sortMode.value) return
+
+	const token = ++sortSwitchToken
+	clearSortAnimations()
+
+	const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+	const cardList = panelContentRef.value?.querySelector<HTMLElement>('.cardList')
+	if (!cardList || typeof cardList.animate !== 'function' || reduceMotion) {
+		sortMode.value = value
+		return
+	}
+
+	const hideAnimation = cardList.animate([{ opacity: 1 }, { opacity: 0 }], {
+		duration: 70,
+		easing: 'ease-out',
+		fill: 'forwards',
+	})
+	sortAnimations = [hideAnimation]
+	try {
+		await hideAnimation.finished
+	} catch {
+		return
+	}
+	if (token !== sortSwitchToken) return
+
+	sortMode.value = value
+	await nextTick()
+	if (token !== sortSwitchToken) return
+
+	const enterAnimations = createSortedCardAnimations()
+	hideAnimation.cancel()
+	sortAnimations = enterAnimations
+	await Promise.allSettled(sortAnimations.map(animation => animation.finished))
+	if (token === sortSwitchToken) {
+		clearSortAnimations()
+	}
+}
+
+const getVisiblePanelRects = () => {
+	const container = panelContentRef.value
+	const positions = new Map<string, DOMRect>()
+	if (!container) return positions
+
+	const containerRect = container.getBoundingClientRect()
+	container.querySelectorAll<HTMLElement>('.panel-card-group > .panel-card-col').forEach(card => {
+		const rect = card.getBoundingClientRect()
+		if (rect.bottom > containerRect.top && rect.top < containerRect.bottom) {
+			positions.set(card.dataset.panelId || '', rect)
+		}
+	})
+	return positions
+}
+
+const animatePanelDrag = async (previousPositions: Map<string, DOMRect>) => {
+	await nextTick()
+	dragAnimations.forEach(animation => animation.cancel())
+	dragAnimations = []
+	panelContentRef.value
+		?.querySelectorAll<HTMLElement>('.panel-card-group > .panel-card-col')
+		.forEach(card => {
+			const previousRect = previousPositions.get(card.dataset.panelId || '')
+			if (!previousRect) return
+			const currentRect = card.getBoundingClientRect()
+			const offsetX = previousRect.left - currentRect.left
+			const offsetY = previousRect.top - currentRect.top
+			if (!offsetX && !offsetY) return
+			dragAnimations.push(
+				card.animate(
+					[
+						{ transform: `translate3d(${offsetX}px, ${offsetY}px, 0)` },
+						{ transform: 'translate3d(0, 0, 0)' },
+					],
+					{ duration: 160, easing: 'cubic-bezier(0.2, 0, 0, 1)' }
+				)
+			)
+		})
+}
 
 const startPanelDrag = (index: number, event: DragEvent) => {
 	if (!canDragSort.value) {
@@ -532,8 +703,10 @@ const movePanel = ({ targetID, clientX, clientY, targetElement }: NonNullable<ty
 		return
 	}
 
+	const previousPositions = getVisiblePanelRects()
 	const [draggedPanel] = allPanelList.value.splice(currentIndex, 1)
 	allPanelList.value.splice(targetIndex, 0, draggedPanel)
+	void animatePanelDrag(previousPositions)
 	dragOrderChanged = true
 	lastPanelMove = { from: currentIndex, to: targetIndex, time: now }
 }
@@ -561,8 +734,12 @@ const getUrlLink = (url: string) => {
 	const reg = /(http|https):\/\/([\w.]+\/?)\S*/
 	return url.replace(reg, '$2')
 }
+const copyPanelAddress = (url: string) => {
+	copyText({ value: getUrlLink(url), success: pub.lang('IP复制成功') })
+}
 // 设置磁盘路径
 const onChangeDiskPath = (val: any, item: any) => {
+	if (item.is_demo) return
 	record_disk({ panel_id: item.panel_id, disk_path: val })
 }
 
@@ -590,6 +767,7 @@ const editPanelInfo = (item: Panel_Params) => {
 }
 // 打开面板
 const openPanelView = (item: any, ev?: any) => {
+	if (item.is_demo) return
 	if (ev) {
 		const targetName = ev.target.localName
 		const isButtonOrIcon = targetName === 'button' || targetName === 'path' || targetName === 'svg'
@@ -627,6 +805,73 @@ const removePanel = (item: any) => {
 	})
 }
 const isRquest = ref(false)
+const createDemoPanels = (count: number) => {
+	const now = Math.floor(Date.now() / 1000)
+	const areas = ['华东', '华南', '华北', '西南']
+
+	return Array.from({ length: count }, (_, index) => {
+		const sequence = index + 1
+		const hasError = sequence % 17 === 0
+		const cpuPercent = 8 + ((sequence * 13) % 83)
+		const memoryTotal = 8192 + (sequence % 3) * 8192
+		const memoryUsed = Math.round(memoryTotal * (0.22 + ((sequence * 7) % 55) / 100))
+		const diskPercent = 18 + ((sequence * 11) % 73)
+		const diskTotal = 200 + (sequence % 5) * 100
+		const diskUsed = Math.round((diskTotal * diskPercent) / 100)
+		const ageIndex = (index * 37) % count
+
+		return {
+			panel_id: -sequence,
+			group_id: 0,
+			title: `[演示] ${areas[index % areas.length]}节点 ${String(sequence).padStart(3, '0')}`,
+			url: `http://demo-${String(sequence).padStart(3, '0')}.local:8888`,
+			auth_type: 1,
+			addtime: now - ageIndex * 3600,
+			status: hasError ? 1 : 0,
+			ov: index % 3,
+			proxy_id: 0,
+			common_use: 0,
+			sort: count - index,
+			area: areas[index % areas.length],
+			current_disk: '/',
+			device_status: hasError ? 'offline' : sequence % 11 === 0 ? 'unknown' : 'online',
+			panel_status: hasError ? 'error' : 'online',
+			is_open: !hasError,
+			is_demo: true,
+			panelInfo: hasError
+				? {
+					load: { one: 0, five: 0, fifteen: 0 },
+					cpu: [0, 0, 0, 0, 0, 0],
+					mem: { memRealUsed: 0, memTotal: 0 },
+					up: 0,
+					down: 0,
+					disk: [],
+					isError: true,
+					errorMsg: pub.lang('演示设备暂时不可达'),
+				}
+				: {
+					load: {
+						one: cpuPercent / 20,
+						five: cpuPercent / 24,
+						fifteen: cpuPercent / 28,
+					},
+					cpu: [cpuPercent, 2 + (sequence % 8), 0, 0, 0, 0],
+					mem: { memRealUsed: memoryUsed, memTotal: memoryTotal },
+					up: 1024 * 1024 * (1 + (sequence % 8)),
+					down: 1024 * 1024 * (5 + (sequence % 20)),
+					disk: [
+						{
+							path: '/',
+							size: [`${diskTotal} GB`, `${diskUsed} GB`, '', `${diskPercent}%`],
+						},
+					],
+					isError: false,
+					errorMsg: '',
+				},
+		}
+	})
+}
+
 const getPanelList = async (Gid?: number) => {
 	isRquest.value = false
 	try {
@@ -635,7 +880,26 @@ const getPanelList = async (Gid?: number) => {
 			route: routes.panel.list.path,
 			data: { limit: 9999, group_id: currentGroupID.value },
 		})
-		allPanelList.value = res.data.data.map((item: any) => {
+		const demoPanelRows = import.meta.env.DEV
+			? res.data.data.filter((item: any) => item.title?.startsWith('[演示]'))
+			: []
+		const demoPanelIndex = new Map(
+			demoPanelRows.map((item: any, index: number) => [item.panel_id, index])
+		)
+		const demoPanelPresets = createDemoPanels(demoPanelRows.length)
+		const nextPanelList = res.data.data.map((item: any) => {
+			const demoIndex = demoPanelIndex.get(item.panel_id)
+			if (typeof demoIndex === 'number') {
+				return {
+					...demoPanelPresets[demoIndex],
+					panel_id: item.panel_id,
+					group_id: item.group_id,
+					title: item.title,
+					url: item.url,
+					addtime: item.addtime,
+					sort: item.sort,
+				}
+			}
 			const existingPanel = allPanelList.value.find((panel: any) => panel.panel_id === item.panel_id)
 			// Initialize with default panelInfo structure
 			let defaultPanelInfo = {
@@ -666,6 +930,7 @@ const getPanelList = async (Gid?: number) => {
 			item.ov = cutAuthStatus(item.ov)
 			return item
 		})
+		allPanelList.value = nextPanelList
 		groupList.value = res.data.groups
 		if (firstLoad.value) {
 			firstLoad.value = false
@@ -711,8 +976,8 @@ const processUpdatesInBatches = () => {
 
     updatesToProcess.forEach((bufferedResult) => {
         // 找到对应的面板并更新其信息
-        const item = allPanelList.value.find((panel: any) => panel.panel_id === bufferedResult.panel_id);
-        if (item) {
+        const item = panelByID.value.get(bufferedResult.panel_id);
+		if (item && !item.is_demo) {
 			item.device_status = bufferedResult.device_status || item.device_status || 'unknown';
 			item.panel_status = bufferedResult.panel_status || item.panel_status || 'unknown';
             item.panelInfo = bufferedResult.data.msg
@@ -748,9 +1013,8 @@ const loadStatusSync = () => {
 	const any_channel = 'panel_loads_recv'
 	ipc.on(any_channel, (event: any, result: any) => {
 		if (result.protocol_changed) {
-			const changedPanel = allPanelList.value.find(
-				(panel: any) => panel.panel_id === result.panel_id
-			)
+			const changedPanel = panelByID.value.get(result.panel_id)
+			if (changedPanel?.is_demo) return
 			if (changedPanel) changedPanel.url = result.protocol_changed.url
 			if (result.protocol_changed.protocol === 'http') {
 				Message.warn(result.protocol_changed.msg)
@@ -831,6 +1095,10 @@ onMounted(() => {
 	updateSegmentIndicator(sortSegmentRef, sortIndicatorStyle)
 })
 onUnmounted(() => {
+	sortSwitchToken += 1
+	clearSortAnimations()
+	dragAnimations.forEach(animation => animation.cancel())
+	dragAnimations = []
 	// 关闭负载状态
 	common.send(routes.panel.stop_load.path, {}, (result: any) => {})
 	// 关闭事件
@@ -1082,29 +1350,16 @@ onUnmounted(() => {
 	// 	transform: translateY(-5px);
 	// 	box-shadow: rgba(0, 0, 0, 0.12) 0px 8px 24px;
 	// }
-	&.isNoOpen {
+	&.isNoOpen:not(.isError):not(.isWarning) {
 		opacity: 0.5;
 	}
 	&.isError {
-		background: #fcf1ef;
+		border-left: 3px solid #f56c6c;
 		cursor: not-allowed !important;
-		box-shadow:
-			rgba(252, 241, 239, 0.3) 0 1px 2px 0,
-			rgba(252, 241, 239, 0.15) 0 2px 6px 2px;
-		:deep(.el-card__header) {
-			background-color: #fcf1ef;
-		}
-		:deep(.el-progress-bar__outer) {
-			background-color: #fde8e8;
-		}
 	}
 	&.isWarning {
-		background: var(--el-color-warning-light-9);
+		border-left: 3px solid #e6a23c;
 		cursor: not-allowed !important;
-		box-shadow: 0 1px 2px rgba(230, 162, 60, 0.14), 0 2px 6px rgba(230, 162, 60, 0.1);
-		:deep(.el-card__header) {
-			background-color: var(--el-color-warning-light-9);
-		}
 	}
 	:deep(.disk-card-select) {
 		.el-select__wrapper {
@@ -1121,6 +1376,36 @@ onUnmounted(() => {
 		font-size: 1.6rem;
 	}
 }
+.panel-copy-address {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.35rem;
+	max-width: 100%;
+	padding: 0;
+	border: 0;
+	color: #6b7280;
+	background: transparent;
+	font-size: 0.9rem;
+	letter-spacing: 1px;
+	cursor: pointer;
+	transition: color 0.15s ease;
+
+	span {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.el-icon {
+		flex-shrink: 0;
+		font-size: 1.2rem;
+	}
+
+	&:hover,
+	&:focus-visible {
+		color: var(--el-color-primary);
+	}
+}
 .panel-device-status {
 	display: inline-flex;
 	align-items: center;
@@ -1129,6 +1414,7 @@ onUnmounted(() => {
 	border-radius: 999px;
 	font-size: 1rem;
 	white-space: nowrap;
+	transition: color 0.2s ease, background-color 0.2s ease;
 
 	i {
 		width: 0.55rem;
@@ -1139,24 +1425,55 @@ onUnmounted(() => {
 	}
 
 	&--online {
-		color: var(--el-color-success);
-		background-color: var(--el-color-success-light-9);
+		color: #20a53a;
+		background-color: #eaf7ed;
 	}
 
 	&--warning {
-		color: var(--el-color-warning);
-		background-color: var(--el-color-warning-light-9);
+		color: #e6a23c;
+		background-color: #fdf6ec;
 	}
 
 	&--offline {
-		color: var(--el-color-danger);
-		background-color: var(--el-color-danger-light-9);
+		color: #f56c6c;
+		background-color: #fef0f0;
+	}
+
+	&--checking {
+		color: #409eff;
+		background-color: #ecf5ff;
+
+		i {
+			animation: panel-status-pulse 1.6s ease-out infinite;
+		}
 	}
 
 	&--unknown {
-		color: var(--el-text-color-secondary);
-		background-color: var(--el-fill-color-light);
+		color: #909399;
+		background-color: #f4f4f5;
 	}
+}
+@keyframes panel-status-pulse {
+	0% {
+		box-shadow: 0 0 0 0 rgba(64, 158, 255, 0.4);
+	}
+	70%,
+	100% {
+		box-shadow: 0 0 0 0.5rem rgba(64, 158, 255, 0);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.panel-device-status--checking i {
+		animation: none;
+	}
+}
+.panel-demo-badge {
+	margin-right: 0.8rem;
+	padding: 0.25rem 0.65rem;
+	border-radius: 999px;
+	color: var(--el-color-primary);
+	background-color: var(--el-color-primary-light-9);
+	font-size: 1rem;
 }
 .panel-card-col {
 	transition: opacity 0.15s ease;
@@ -1165,8 +1482,8 @@ onUnmounted(() => {
 		opacity: 0.25;
 	}
 }
-.panel-card-move {
-	transition: transform 0.2s ease;
+.panel-card-group {
+	display: contents;
 }
 .panel-drag-handle {
 	display: inline-flex;

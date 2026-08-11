@@ -55,7 +55,7 @@ class IpcCommon {
 				channel: channel,
 				data: toRaw(data),
 			}
-			ipc.send(channel, pdata)
+			ipc.send(route, pdata)
 		})
 	}
 }
