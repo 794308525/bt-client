@@ -21,7 +21,7 @@ class WindowController extends Controller {
      */
     async load(options) {
         LoadView = new BrowserView(options);
-        LoadView.webContents.loadURL('file://' + pub.get_public_path() + '/html/loading.html');
+        await LoadView.webContents.loadURL('file://' + pub.get_public_path() + '/html/loading.html');
     }
 
     /**
@@ -65,142 +65,135 @@ class WindowController extends Controller {
      * @returns {object}
      */
     async create(args, event) {
-        let channel = args.channel;
-        let url = args.data.url;
-        let bounds = args.data.bounds;
-        let auto_resize = args.data.auto_resize;
-        let view_key = args.data.view_key;
+        const channel = args.channel;
+        const url = args.data.url;
+        const bounds = args.data.bounds;
+        const auto_resize = args.data.auto_resize;
+        const view_key = args.data.view_key;
         let options = args.data.options;
-        let proxy_id = args.data.proxy_id || 0;
+        const proxy_id = args.data.proxy_id || 0;
 
-        // 获取主窗口
-        let mainWindow = Electron.mainWindow;
-        if (!mainWindow) {
-            return pub.send_error(event, channel, pub.lang('主窗口不存在'));
-        }
+        const mainWindow = Electron.mainWindow;
+        if (!mainWindow) return pub.send_error(event, channel, pub.lang('主窗口不存在'));
 
-        // 判断视图是否存在
         if (global.PanelViews[view_key]) {
-            // 如果视图已经存在，则直接显示
+            if (!global.PanelViews[view_key].loaded) {
+                return pub.send_error(event, channel, pub.lang('视图正在创建，请稍候'));
+            }
             mainWindow.setBrowserView(global.PanelViews[view_key]);
-            return pub.send_success_msg(event, channel, pub.lang('视图已经存在,直接显示'));
+            return pub.send_success(event, channel, { view_key: view_key, existing: true });
         }
 
         if (!options) options = {};
         if (!options.webPreferences) options.webPreferences = {};
 
-        // 开发者模式
-        // options.webPreferences.devTools = true;
-
-
-        // 创建视图
-        global.PanelViews[view_key] = new BrowserView(options);
-
-        // 打开开发者工具
-        // global.PanelViews[view_key].webContents.openDevTools();
-
-
-        // 设置主窗口视图
-        mainWindow.setBrowserView(global.PanelViews[view_key]);
-        global.PanelViews[view_key].is_show = true;
-        global.PanelViews[view_key].view_key = view_key;
+        const panelView = new BrowserView(options);
+        global.PanelViews[view_key] = panelView;
+        panelView.is_show = true;
+        panelView.loaded = false;
+        panelView.view_key = view_key;
         ShowKey = view_key;
 
-        // 设置视图位置和大小
-        if (bounds) {
-            if (bounds.x !== undefined) {
-                bounds.x = parseInt(bounds.x);
-                bounds.y = parseInt(bounds.y);
-                bounds.width = parseInt(bounds.width);
-                bounds.height = parseInt(bounds.height) + 1;
-                global.PanelViews[view_key].setBounds(bounds);
-            }
-        }
-
-        // 设置视图自动调整大小
-        if (auto_resize) global.PanelViews[view_key].setAutoResize(auto_resize);
-
-
-        // 设置事件
-        Services.get('window').setEvent(global.PanelViews[view_key], proxy_id);
-
-        // 加载URL
-        global.PanelViews[view_key].webContents.loadURL(url);
-
-
-        // 将加载视图置顶
-        if (!LoadView) this.load(options); // 创建加载视图
-        if (LoadView) {
-            mainWindow.setBrowserView(LoadView);
-            LoadView.is_show = true;
+        mainWindow.setBrowserView(panelView);
+        if (bounds && bounds.x !== undefined) {
             bounds.x = parseInt(bounds.x);
             bounds.y = parseInt(bounds.y);
             bounds.width = parseInt(bounds.width);
-            bounds.height = parseInt(bounds.height);
-            LoadView.setBounds(bounds);
-            LoadView.setAutoResize(auto_resize);
+            bounds.height = parseInt(bounds.height) + 1;
+            panelView.setBounds(bounds);
+        }
+        if (auto_resize) panelView.setAutoResize(auto_resize);
+        Services.get('window').setEvent(panelView, proxy_id);
 
-            // 隐藏子视图
-            mainWindow.removeBrowserView(global.PanelViews[view_key]);
+        if (!LoadView) {
+            try {
+                await this.load(options);
+            } catch (error) {
+                LoadView = null;
+            }
+        }
+        if (LoadView) {
+            mainWindow.setBrowserView(LoadView);
+            LoadView.is_show = true;
+            if (bounds) {
+                LoadView.setBounds({
+                    x: parseInt(bounds.x),
+                    y: parseInt(bounds.y),
+                    width: parseInt(bounds.width),
+                    height: parseInt(bounds.height)
+                });
+            }
+            if (auto_resize) LoadView.setAutoResize(auto_resize);
+            mainWindow.removeBrowserView(panelView);
         }
 
+        let settled = false;
+        let loadTimer = null;
+        const hideCurrentLoadView = () => {
+            if (LoadView && LoadView.is_show && ShowKey === view_key) this.hide_load();
+        };
+        const getLoadErrorMessage = (errorDescription) => {
+            const messages = {
+                ERR_TIMED_OUT: pub.lang('连接超时'),
+                ERR_CONNECTION_REFUSED: pub.lang('无法连接到网络'),
+                ERR_CONNECTION_RESET: pub.lang('网络连接被重置'),
+                ERR_NAME_NOT_RESOLVED: pub.lang('无法解析域名')
+            };
+            return messages[errorDescription] || pub.lang('请检查网络连接');
+        };
 
-        // 页面加载失败
-        global.PanelViews[view_key].webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-            let message = pub.lang('请检查网络连接');
-            switch (errorDescription) {
-                case 'ERR_TIMED_OUT':
-                    message = pub.lang('连接超时');
-                    break;
-                case 'ERR_CONNECTION_REFUSED':
-                    message = pub.lang('无法连接到网络');
-                    // 重新加载
-                    setTimeout(() => {
-                        if (!global.PanelViews[view_key].reload_num) global.PanelViews[view_key].reload_num = 0;
-                        global.PanelViews[view_key].reload_num++;
-                        global.PanelViews[view_key].webContents.reload();
-                    }, 500);
-                    break;
-                case 'ERR_CONNECTION_RESET':
-                    message = pub.lang('网络连接被重置');
-                    break;
-                case 'ERR_NAME_NOT_RESOLVED':
-                    message = pub.lang('无法解析域名');
-                    break;
-                case 'ERR_ABORTED':
-                    message = pub.lang('连接被中止');
-                    break;
+        const destroyPendingView = () => {
+            try {
+                mainWindow.removeBrowserView(panelView);
+            } catch (error) {}
+            try {
+                this.closeSearchView(panelView);
+                if (!panelView.webContents.isDestroyed()) panelView.webContents.destroy();
+            } catch (error) {}
+            if (global.PanelViews[view_key] === panelView) delete global.PanelViews[view_key];
+            if (ShowKey === view_key) ShowKey = '';
+        };
+
+        const finishCreate = (status, message) => {
+            if (settled) return;
+            settled = true;
+            if (loadTimer) clearTimeout(loadTimer);
+            hideCurrentLoadView();
+
+            if (!status) {
+                destroyPendingView();
+                return pub.send_error(event, channel, message || pub.lang('面板页面加载失败'));
             }
 
-            if (errorDescription != 'ERR_CONNECTION_REFUSED' && global.PanelViews[view_key].reload_num < 40) {
-                global.PanelViews[view_key].webContents.loadURL('file://' + pub.get_public_path() + '/html/error.html');
-                if (LoadView.is_show) this.hide_load();
+            panelView.loaded = true;
+            if (panelView.is_show && ShowKey == view_key) mainWindow.setBrowserView(panelView);
+            return pub.send_success(event, channel, {
+                view_key: view_key,
+                url: panelView.webContents.getURL()
+            });
+        };
 
-                dialog.showErrorBox(pub.lang('页面加载失败，{}', message), pub.lang('错误码：{}，错误描述：{}', errorCode, errorDescription));
+        panelView.webContents.on('did-fail-load', (loadEvent, errorCode, errorDescription, validatedURL, isMainFrame) => {
+            if (!isMainFrame || errorDescription === 'ERR_ABORTED') return;
+            const message = getLoadErrorMessage(errorDescription);
+            if (!settled) {
+                return finishCreate(false, pub.lang('面板页面加载失败：{}', message));
             }
+
+            panelView.webContents.loadURL('file://' + pub.get_public_path() + '/html/error.html');
+            hideCurrentLoadView();
+            dialog.showErrorBox(pub.lang('页面加载失败，{}', message), pub.lang('错误码：{}，错误描述：{}', errorCode, errorDescription));
         });
 
+        panelView.webContents.on('did-finish-load', () => finishCreate(true));
+        loadTimer = setTimeout(() => {
+            finishCreate(false, pub.lang('面板页面加载超时'));
+        }, 20000);
 
-
-
-        // 页面加载完成
-        global.PanelViews[view_key].webContents.on('did-finish-load', () => {
-            // 隐藏加载视图
-            if (LoadView.is_show) this.hide_load();
-
-            // 显示子视图
-            global.PanelViews[view_key].loaded = true;
-            if (global.PanelViews[view_key].is_show && ShowKey == view_key) {
-                mainWindow.setBrowserView(global.PanelViews[view_key]);
-            }
+        panelView.webContents.loadURL(url).catch((error) => {
+            if (error && (error.code === 'ERR_ABORTED' || error.errno === -3 || /ERR_ABORTED/i.test(error.message || ''))) return;
+            finishCreate(false, pub.lang('面板页面加载失败：{}', error.message));
         });
-
-
-        // 打开开发者工具
-        // global.PanelViews[view_key].webContents.openDevTools();
-
-        // Log.info('create view:', view_key);
-        return pub.send_success_msg(event, channel, pub.lang('视图创建成功'));
     }
 
     /**
@@ -232,7 +225,10 @@ class WindowController extends Controller {
             }
             // 从主窗口移除视图
             mainWindow.removeBrowserView(global.PanelViews[view_key]);
-            if (LoadView) this.hide_load();
+            if (ShowKey === view_key) {
+                this.hide_load();
+                ShowKey = '';
+            }
 
             // 关闭搜索视图
             this.closeSearchView(global.PanelViews[view_key]);
@@ -284,6 +280,7 @@ class WindowController extends Controller {
                 global.PanelViews[view_key].webContents.focus();
                 
             } else {
+                ShowKey = view_key;
                 this.show_load();
             }
             return pub.send_success_msg(event, channel, pub.lang('视图已显示'));
@@ -320,7 +317,10 @@ class WindowController extends Controller {
                 global.PanelViews[view_key].is_show = false;
                 
             }
-            this.hide_load();
+            if (ShowKey === view_key) {
+                this.hide_load();
+                ShowKey = '';
+            }
 
             return pub.send_success_msg(event, channel, pub.lang('视图已隐藏'));
         }
@@ -678,5 +678,3 @@ class WindowController extends Controller {
 
 WindowController.toString = () => '[class WindowController]';
 module.exports = WindowController;
-
-

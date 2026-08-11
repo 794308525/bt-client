@@ -1,0 +1,11 @@
+.DS_Store
+/data/
+/logs/
+/node_modules/
+/out/
+/package-lock.json
+/public/dist/
+/public/electron/
+/run/
+/public/ssl/*.key
+/public/ssl/*.pem

@@ -116,7 +116,7 @@
 						<el-col
 							v-for="(item, index) in showListArray"
 							:key="item.panel_id"
-							v-memo="[item.panel_id, item.panelInfo.isError, item.current_disk, draggedPanelID]"
+							v-memo="[item.panel_id, item.panelInfo.isError, item.device_status, item.current_disk, draggedPanelID]"
 							:xs="24"
 							:sm="12"
 							:md="8"
@@ -131,7 +131,11 @@
 							@click="openPanelView(item, $event)">
 							<el-card
 								class="card-panel-item "
-								:class="{ isError: item.panelInfo.isError, isNoOpen: !item.is_open }">
+								:class="{
+									isError: item.panelInfo.isError && item.device_status !== 'online',
+									isWarning: item.panelInfo.isError && item.device_status === 'online',
+									isNoOpen: !item.is_open,
+								}">
 								<template #header>
 									<!-- <div class="card-panel-header flex justify-between items-center w-full"> -->
 									<div class="flex flex-1 items-center min-w-0 pl-[.75rem] py-[.75rem]">
@@ -165,6 +169,11 @@
 											</template>
 										</div>
 									</div>
+									<span
+										class="panel-device-status flex-shrink-0"
+										:class="`panel-device-status--${getDeviceStatusClass(item)}`">
+										<i></i>{{ getDeviceStatusText(item) }}
+									</span>
 									<el-dropdown class="align-right cursor-pointer" trigger="click">
 										<el-button :icon="Setting" size="small" class="card-btn-style text-primary" />
 										<template #dropdown>
@@ -259,8 +268,10 @@
 								</template>
 								<template v-else>
 									<div class="h-[14rem]">
-										<span v-if="item.panelInfo.isError" class="text-red-500"
-											>{{ pub.lang('[离线]') }} {{ item.panelInfo.errorMsg }}</span
+										<span
+											v-if="item.panelInfo.isError"
+											:class="item.device_status === 'online' ? 'text-amber-500' : 'text-red-500'"
+											>[{{ getDeviceStatusText(item) }}] {{ item.panelInfo.errorMsg }}</span
 										>
 									</div>
 								</template>
@@ -399,6 +410,18 @@ const diskProgress = (item: any, path: string) => {
 	let diskSize = item.panelInfo.disk.find((items: any) => items.path === path)
 	if (typeof diskSize === 'undefined') return 0
 	return Number(diskSize.size[3].replace('%', ''))
+}
+
+const getDeviceStatusText = (item: any) => {
+	if (item.device_status === 'online') {
+		return item.panelInfo.isError ? pub.lang('设备在线 / 面板异常') : pub.lang('在线')
+	}
+	if (item.device_status === 'offline') return pub.lang('设备不可达')
+	return item.panelInfo.isError ? pub.lang('连接异常') : pub.lang('检测中')
+}
+const getDeviceStatusClass = (item: any) => {
+	if (item.device_status === 'online' && item.panelInfo.isError) return 'warning'
+	return item.device_status || 'unknown'
 }
 
 const isShow = computed(() => {
@@ -613,6 +636,7 @@ const getPanelList = async (Gid?: number) => {
 			data: { limit: 9999, group_id: currentGroupID.value },
 		})
 		allPanelList.value = res.data.data.map((item: any) => {
+			const existingPanel = allPanelList.value.find((panel: any) => panel.panel_id === item.panel_id)
 			// Initialize with default panelInfo structure
 			let defaultPanelInfo = {
 				load: { one: 0, five: 0, fifteen: 0 },
@@ -623,13 +647,14 @@ const getPanelList = async (Gid?: number) => {
 				isError: false,
 				errorMsg: '',
 			};
+			item.device_status = existingPanel?.device_status || 'unknown'
+			item.panel_status = existingPanel?.panel_status || 'unknown'
 
 			// If status is 1, it means connection error, so set isError to true and add error message
 			if (item.status === 1) {
 				item.panelInfo = { ...defaultPanelInfo, isError: true, errorMsg: pub.lang('连接失败：') };
 			} else {
 				// Try to preserve existing live panelInfo if available and not in an error state
-				const existingPanel = allPanelList.value.find((panel: any) => panel.panel_id === item.panel_id);
 				if (existingPanel && !existingPanel.panelInfo.isError) {
 					item.panelInfo = existingPanel.panelInfo;
 				} else {
@@ -688,6 +713,8 @@ const processUpdatesInBatches = () => {
         // 找到对应的面板并更新其信息
         const item = allPanelList.value.find((panel: any) => panel.panel_id === bufferedResult.panel_id);
         if (item) {
+			item.device_status = bufferedResult.device_status || item.device_status || 'unknown';
+			item.panel_status = bufferedResult.panel_status || item.panel_status || 'unknown';
             item.panelInfo = bufferedResult.data.msg
                 ? Object.assign({}, { isError: true, errorMsg: bufferedResult.data.msg })
                 : bufferedResult.data;
@@ -720,6 +747,17 @@ const processUpdatesInBatches = () => {
 const loadStatusSync = () => {
 	const any_channel = 'panel_loads_recv'
 	ipc.on(any_channel, (event: any, result: any) => {
+		if (result.protocol_changed) {
+			const changedPanel = allPanelList.value.find(
+				(panel: any) => panel.panel_id === result.panel_id
+			)
+			if (changedPanel) changedPanel.url = result.protocol_changed.url
+			if (result.protocol_changed.protocol === 'http') {
+				Message.warn(result.protocol_changed.msg)
+			} else {
+				Message.success(result.protocol_changed.msg)
+			}
+		}
 		// console.log(111); // 移除调试日志
 		// 存储最新的结果到缓冲区，如果同一 panel_id 有多个更新，只保留最新的
 		updateBuffer.set(result.panel_id, result);
@@ -1060,6 +1098,14 @@ onUnmounted(() => {
 			background-color: #fde8e8;
 		}
 	}
+	&.isWarning {
+		background: var(--el-color-warning-light-9);
+		cursor: not-allowed !important;
+		box-shadow: 0 1px 2px rgba(230, 162, 60, 0.14), 0 2px 6px rgba(230, 162, 60, 0.1);
+		:deep(.el-card__header) {
+			background-color: var(--el-color-warning-light-9);
+		}
+	}
 	:deep(.disk-card-select) {
 		.el-select__wrapper {
 			padding: 0;
@@ -1073,6 +1119,43 @@ onUnmounted(() => {
 	}
 	.card-btn-style{
 		font-size: 1.6rem;
+	}
+}
+.panel-device-status {
+	display: inline-flex;
+	align-items: center;
+	margin-right: 0.8rem;
+	padding: 0.25rem 0.65rem;
+	border-radius: 999px;
+	font-size: 1rem;
+	white-space: nowrap;
+
+	i {
+		width: 0.55rem;
+		height: 0.55rem;
+		margin-right: 0.4rem;
+		border-radius: 50%;
+		background-color: currentColor;
+	}
+
+	&--online {
+		color: var(--el-color-success);
+		background-color: var(--el-color-success-light-9);
+	}
+
+	&--warning {
+		color: var(--el-color-warning);
+		background-color: var(--el-color-warning-light-9);
+	}
+
+	&--offline {
+		color: var(--el-color-danger);
+		background-color: var(--el-color-danger-light-9);
+	}
+
+	&--unknown {
+		color: var(--el-text-color-secondary);
+		background-color: var(--el-fill-color-light);
 	}
 }
 .panel-card-col {
