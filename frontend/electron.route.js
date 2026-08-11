@@ -57,6 +57,25 @@ const routes = {
 				},
 			},
 		},
+		set_sort: {
+			title: '保存面板默认排序',
+			method: 'ipc',
+			path: 'controller.panel.set_sort',
+			args: {
+				channel: {
+					type: 'string',
+					required: true,
+					description: '通道标识',
+				},
+				data: {
+					panel_ids: {
+						type: 'array',
+						required: true,
+						description: '按展示顺序排列的面板ID',
+					},
+				},
+			},
+		},
 		record_disk: {
 			title: '记录面板选中的磁盘',
 			method: 'ipc',

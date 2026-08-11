@@ -8,6 +8,13 @@
 					}}</el-button>
 					<el-button size="large" @click="importPanel">{{ pub.lang('导入') }}</el-button>
 					<el-button size="large" @click="exportPanel">{{ pub.lang('导出') }}</el-button>
+					<el-radio-group v-model="sortMode" size="large" class="ml-[1.2rem]">
+						<el-radio-button
+							v-for="item in sortOptions"
+							:key="item.value"
+							:label="item.label"
+							:value="item.value" />
+					</el-radio-group>
 				</div>
 				<div class="flex items-center">
 					<el-switch
@@ -65,40 +72,58 @@
 			<div class="panel__content">
 				<el-scrollbar :height="mainHeight - 100">
 					<el-row class="cardList w-full" :gutter="10">
+						<TransitionGroup name="panel-card">
 						<el-col
 							v-for="(item, index) in showListArray"
-							:key="index"
-  						v-memo="[item.panel_id, item.panelInfo.isError, item.current_disk]"
+							:key="item.panel_id"
+							v-memo="[item.panel_id, item.panelInfo.isError, item.current_disk, draggedPanelID]"
 							:xs="24"
 							:sm="12"
 							:md="8"
 							:lg="6"
 							:xl="4"
-							class="mb-[1rem]"
+							class="mb-[1rem] panel-card-col"
+							:class="{
+								'panel-card-col--dragging': draggedPanelID === item.panel_id,
+							}"
+							@dragover.prevent="queuePanelMove(item.panel_id, $event)"
+							@drop.stop.prevent="finishPanelDrag"
 							@click="openPanelView(item, $event)">
 							<el-card
 								class="card-panel-item "
 								:class="{ isError: item.panelInfo.isError, isNoOpen: !item.is_open }">
 								<template #header>
 									<!-- <div class="card-panel-header flex justify-between items-center w-full"> -->
-									<div class="flex flex-1 flex-col pl-[.75rem] py-[.75rem]">
-										<template v-if="isShowIP">
-											<div class="flex items-center">
-												<span class="truncate max-w-[200px]">{{ item.title }}</span>
-												<span
-													class="ml-2 text-[.8rem] py-[.2rem] px-[.4rem] rounded-[4px] flex-shrink-0"
-													:class="[authType[item.ov].text, authType[item.ov].bg]"
-													>{{ authType[item.ov].name }}</span
-												>
-											</div>
-											<div class="text-[.9rem] text-gray-500 tracking-1px">
-												[{{ getUrlLink(item.url) }}]
-											</div>
-										</template>
-										<template v-else>
-											<!-- 兼容标题是IP的情况 -->
-											<span v-show="!checkIp(item.title)" class="truncate max-w-[200px]">{{ item.title }}</span>
-										</template>
+									<div class="flex flex-1 items-center min-w-0 pl-[.75rem] py-[.75rem]">
+										<span
+											class="panel-drag-handle mr-2 flex-shrink-0"
+											:class="{ 'panel-drag-handle--disabled': !canDragSort }"
+											:draggable="canDragSort"
+											:title="dragHandleTitle"
+											@click.stop
+											@dragstart.stop="startPanelDrag(index, $event)"
+											@dragend.stop="finishPanelDrag">
+											<bt-icon name="sort" size="16" color="#939393" />
+										</span>
+										<div class="flex flex-1 flex-col min-w-0">
+											<template v-if="isShowIP">
+												<div class="flex items-center">
+													<span class="truncate max-w-[200px]">{{ item.title }}</span>
+													<span
+														class="ml-2 text-[.8rem] py-[.2rem] px-[.4rem] rounded-[4px] flex-shrink-0"
+														:class="[authType[item.ov].text, authType[item.ov].bg]"
+														>{{ authType[item.ov].name }}</span
+													>
+												</div>
+												<div class="text-[.9rem] text-gray-500 tracking-1px">
+													[{{ getUrlLink(item.url) }}]
+												</div>
+											</template>
+											<template v-else>
+												<!-- 兼容标题是IP的情况 -->
+												<span v-show="!checkIp(item.title)" class="truncate max-w-[200px]">{{ item.title }}</span>
+											</template>
+										</div>
 									</div>
 									<el-dropdown class="align-right cursor-pointer" trigger="click">
 										<el-button :icon="Setting" size="small" class="card-btn-style text-primary" />
@@ -201,6 +226,7 @@
 								</template>
 							</el-card>
 						</el-col>
+						</TransitionGroup>
 					</el-row>
 				</el-scrollbar>
 			</div>
@@ -246,7 +272,7 @@ import installResults from './components/AddPanel/installResults.vue'
 import AddGroup from '@views/panel/components/AddGroup/index.vue'
 import White from '@/assets/images/logo-white.svg'
 import { pub, getByteUnit } from '@utils/tools'
-import { record_disk, type Panel_Params } from './controller'
+import { record_disk, set_panel_sort, type Panel_Params } from './controller'
 import { checkIp } from '@utils/is'
 
 import { common, routes, ipc } from '@api/http'
@@ -271,6 +297,22 @@ const isActive = ref(false)
 const searchServic = ref('')
 const firstLoad = ref(true)
 const allPanelList = ref([]) as any
+const sortMode = ref<'default' | 'latest' | 'earliest'>('default')
+const sortOptions = [
+	{ label: pub.lang('默认排序'), value: 'default' },
+	{ label: pub.lang('最新添加'), value: 'latest' },
+	{ label: pub.lang('最早添加'), value: 'earliest' },
+]
+const draggedPanelID = ref<number | null>(null)
+let dragOrderChanged = false
+let dragMoveFrame: number | null = null
+let pendingDragMove: {
+	targetID: number
+	clientX: number
+	clientY: number
+	targetElement: HTMLElement
+} | null = null
+let lastPanelMove = { from: -1, to: -1, time: 0 }
 
 const authType = [
 	{ name: pub.lang('免费版'), bg: 'bg-[#e7e7e7]', text: 'text-[#909399]' },
@@ -298,16 +340,125 @@ const isShow = computed(() => {
 	return status
 })
 
+const canDragSort = computed(() => sortMode.value === 'default' && searchServic.value === '')
+const dragHandleTitle = computed(() => {
+	if (sortMode.value !== 'default') return pub.lang('切换到默认排序后可拖动')
+	if (searchServic.value !== '') return pub.lang('清空搜索后可拖动')
+	return pub.lang('拖动排序')
+})
+
 // Computed property for showListArray
 const showListArray = computed(() => {
+	let list = allPanelList.value
 	if (searchServic.value !== '') {
-		return allPanelList.value.filter(
+		list = allPanelList.value.filter(
 			(item: any) =>
 				item.title.includes(searchServic.value) || item.url.includes(searchServic.value)
 		)
 	}
-	return allPanelList.value
+	if (sortMode.value === 'latest') {
+		return [...list].sort((a: any, b: any) => Number(b.addtime) - Number(a.addtime))
+	}
+	if (sortMode.value === 'earliest') {
+		return [...list].sort((a: any, b: any) => Number(a.addtime) - Number(b.addtime))
+	}
+	return list
 })
+
+const startPanelDrag = (index: number, event: DragEvent) => {
+	if (!canDragSort.value) {
+		event.preventDefault()
+		return
+	}
+	draggedPanelID.value = showListArray.value[index].panel_id
+	dragOrderChanged = false
+	if (event.dataTransfer) {
+		event.dataTransfer.effectAllowed = 'move'
+		event.dataTransfer.setData('text/plain', String(draggedPanelID.value))
+		const handle = event.currentTarget as HTMLElement
+		const card = handle.closest('.panel-card-col') as HTMLElement | null
+		if (card) {
+			const rect = card.getBoundingClientRect()
+			event.dataTransfer.setDragImage(
+				card,
+				Math.max(0, event.clientX - rect.left),
+				Math.max(0, event.clientY - rect.top)
+			)
+		}
+	}
+}
+
+const queuePanelMove = (targetID: number, event: DragEvent) => {
+	if (!canDragSort.value || draggedPanelID.value === null) return
+	pendingDragMove = {
+		targetID,
+		clientX: event.clientX,
+		clientY: event.clientY,
+		targetElement: event.currentTarget as HTMLElement,
+	}
+	if (dragMoveFrame !== null) return
+	dragMoveFrame = requestAnimationFrame(() => {
+		const move = pendingDragMove
+		dragMoveFrame = null
+		pendingDragMove = null
+		if (move) movePanel(move)
+	})
+}
+
+const movePanel = ({ targetID, clientX, clientY, targetElement }: NonNullable<typeof pendingDragMove>) => {
+	if (!canDragSort.value || draggedPanelID.value === null || targetID === draggedPanelID.value) return
+	const currentIndex = allPanelList.value.findIndex(
+		(item: any) => item.panel_id === draggedPanelID.value
+	)
+	const targetIndex = allPanelList.value.findIndex((item: any) => item.panel_id === targetID)
+	if (currentIndex < 0 || targetIndex < 0 || currentIndex === targetIndex) return
+
+	const now = performance.now()
+	if (
+		now - lastPanelMove.time < 180 &&
+		currentIndex === lastPanelMove.to &&
+		targetIndex === lastPanelMove.from
+	) {
+		return
+	}
+
+	const targetRect = targetElement.getBoundingClientRect()
+	const draggedElement = document.querySelector('.panel-card-col--dragging') as HTMLElement | null
+	const draggedRect = draggedElement?.getBoundingClientRect()
+	const isSameRow = draggedRect
+		? Math.abs(targetRect.top - draggedRect.top) < Math.min(targetRect.height, draggedRect.height) / 2
+		: true
+	const pointerPosition = isSameRow ? clientX : clientY
+	const targetMiddle = isSameRow
+		? targetRect.left + targetRect.width / 2
+		: targetRect.top + targetRect.height / 2
+	const isMovingForward = currentIndex < targetIndex
+
+	if ((isMovingForward && pointerPosition < targetMiddle) || (!isMovingForward && pointerPosition > targetMiddle)) {
+		return
+	}
+
+	const [draggedPanel] = allPanelList.value.splice(currentIndex, 1)
+	allPanelList.value.splice(targetIndex, 0, draggedPanel)
+	dragOrderChanged = true
+	lastPanelMove = { from: currentIndex, to: targetIndex, time: now }
+}
+
+const finishPanelDrag = () => {
+	const finalMove = pendingDragMove
+	if (dragMoveFrame !== null) {
+		cancelAnimationFrame(dragMoveFrame)
+		dragMoveFrame = null
+	}
+	pendingDragMove = null
+	if (finalMove) movePanel(finalMove)
+	if (dragOrderChanged) {
+		set_panel_sort(allPanelList.value.map((item: any) => item.panel_id))
+	}
+	dragOrderChanged = false
+	lastPanelMove = { from: -1, to: -1, time: 0 }
+	draggedPanelID.value = null
+}
 
 // 获取链接
 const getUrlLink = (url: string) => {
@@ -683,6 +834,30 @@ onUnmounted(() => {
 	}
 	.card-btn-style{
 		font-size: 1.6rem;
+	}
+}
+.panel-card-col {
+	transition: opacity 0.15s ease;
+
+	&--dragging {
+		opacity: 0.25;
+	}
+}
+.panel-card-move {
+	transition: transform 0.2s ease;
+}
+.panel-drag-handle {
+	display: inline-flex;
+	align-items: center;
+	cursor: grab;
+
+	&:active {
+		cursor: grabbing;
+	}
+
+	&--disabled {
+		cursor: not-allowed;
+		opacity: 0.45;
 	}
 }
 .disk-card-option {

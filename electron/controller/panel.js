@@ -243,7 +243,7 @@ class PanelController extends Controller {
     }
     
     // 获取面板列表
-    result.data = pub.M(this.TABLE).where(where, params).order('panel_id DESC').select();
+    result.data = pub.M(this.TABLE).where(where, params).order('sort DESC, panel_id DESC').select();
 		global.PanelList = result.data;
 
     for (let i = 0; i < result.data.length; i++) {
@@ -276,6 +276,29 @@ class PanelController extends Controller {
 		let panel_id = args.data.panel_id;
 		let disk_path = args.data.disk_path;
 		pub.M(this.TABLE).where('panel_id=?', panel_id).update({current_disk: disk_path});
+	}
+
+	/**
+	 * @name 保存面板默认排序
+	 * @param {object} args {
+	 *  panel_ids: number[] - 按展示顺序排列的面板ID
+	 * }
+	 */
+	async set_sort(args, event) {
+		const panel_ids = Array.isArray(args.data.panel_ids) ? args.data.panel_ids : [];
+		if (panel_ids.length === 0) return;
+
+		const panel_id_set = new Set(panel_ids);
+		const current_list = pub.M(this.TABLE).order('sort DESC, panel_id DESC').select();
+		const ordered_ids = [...panel_ids];
+		const merged_ids = current_list.map(panel => {
+			return panel_id_set.has(panel.panel_id) ? ordered_ids.shift() : panel.panel_id;
+		});
+		const total = merged_ids.length;
+
+		merged_ids.forEach((panel_id, index) => {
+			pub.M(this.TABLE).where('panel_id=?', panel_id).update({ sort: total - index });
+		});
 	}
 
   /**
@@ -1246,4 +1269,4 @@ class PanelController extends Controller {
 }
 
 PanelController.toString = () => '[class PanelController]';
-module.exports = PanelController;  
+module.exports = PanelController;
