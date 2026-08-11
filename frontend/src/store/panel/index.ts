@@ -34,6 +34,7 @@ export const usePanelBase = defineStore(
 		const groupManageVisible = ref(false) // 分组管理弹窗
 
 		const isShowIP = ref(true) // 是否显示IP
+		const showGroupCount = ref(true) // 是否显示分组数量
 		const addPanelVisible = ref(false) // 添加面板弹窗
 		const isEdit = ref(false) // 是否编辑模式
 		const panelParams = ref<Panel_Params>()
@@ -54,6 +55,7 @@ export const usePanelBase = defineStore(
 			editGroupParams,
 			groupManageVisible,
 			isShowIP,
+			showGroupCount,
 			addPanelVisible,
 			isEdit,
 			panelParams,
@@ -64,7 +66,7 @@ export const usePanelBase = defineStore(
 	},
 	{
 		persist: {
-			paths: ['isShowIP', 'currentGroupID'],
+			paths: ['isShowIP', 'showGroupCount', 'currentGroupID'],
 		},
 	}
 )

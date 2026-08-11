@@ -219,6 +219,20 @@ class PanelController extends Controller {
       result.groups = result.groups.concat(groups);
     }
 
+    // 统计各分组面板数量，全部分组展示所有面板总数
+    const panel_counts = pub.M(this.TABLE).field('group_id, COUNT(*) AS panel_count').group('group_id').select();
+    const group_count_map = {};
+    let panel_total = 0;
+    panel_counts.forEach(item => {
+      const count = Number(item.panel_count) || 0;
+      group_count_map[item.group_id] = count;
+      panel_total += count;
+    });
+    result.groups = result.groups.map(group => ({
+      ...group,
+      panel_count: group.group_id === -1 ? panel_total : (group_count_map[group.group_id] || 0)
+    }));
+
     // 检查分组是否存在
     if (group_id !== undefined && group_id != -1){
       let is_group_exists = false;

@@ -1,25 +1,84 @@
 <template>
 	<div class="panel px-[3.6rem] pt-[2.4rem]">
 		<template v-if="isShow">
-			<div class="panel__header flex justify-between mb-[2.4rem]">
-				<div class="btn flex items-center">
+			<div class="panel__header flex justify-between items-center mb-[2.4rem]">
+				<div class="panel-primary-actions flex items-center flex-shrink-0">
+					<div class="panel-brand flex items-center">
+						<img :src="LogoGreen" class="panel-brand__logo" :alt="pub.lang('堡塔')" />
+						<div class="panel-brand__content">
+							<div class="panel-brand__name">{{ pub.lang('堡塔多机管理') }}</div>
+							<a
+								class="panel-brand__site"
+								href="https://www.bt.cn"
+								target="_blank"
+								rel="noopener noreferrer">
+								{{ pub.lang('官方网站') }}
+								<el-icon><TopRight /></el-icon>
+							</a>
+						</div>
+					</div>
 					<el-button type="primary" size="large" @click="addPanel">{{
 						pub.lang('添加面板')
 					}}</el-button>
-					<el-button size="large" @click="importPanel">{{ pub.lang('导入') }}</el-button>
-					<el-button size="large" @click="exportPanel">{{ pub.lang('导出') }}</el-button>
-					<el-radio-group v-model="sortMode" size="large" class="ml-[1.2rem]">
-						<el-radio-button
-							v-for="item in sortOptions"
-							:key="item.value"
-							:label="item.label"
-							:value="item.value" />
-					</el-radio-group>
+					<el-button text class="panel-secondary-action" @click="importPanel">{{ pub.lang('导入') }}</el-button>
+					<el-button text class="panel-secondary-action" @click="exportPanel">{{ pub.lang('导出') }}</el-button>
 				</div>
-				<div class="flex items-center">
+				<div class="panel-toolbar flex items-center min-w-0">
+					<div class="panel-control flex items-center">
+						<span class="panel-control__label">{{ pub.lang('分组') }}</span>
+						<div ref="groupSegmentRef" class="panel-segmented flex items-center">
+							<el-radio-group
+								:model-value="currentGroupID"
+								@input="switchGroup"
+								class="panel-segmented__group">
+								<span
+									class="panel-segmented__indicator"
+									:style="groupIndicatorStyle" />
+								<el-radio-button
+									v-for="item in groupList"
+									:label="item.group_name"
+									:value="item.group_id">
+									<span>{{ item.group_name }}</span>
+									<span v-if="showGroupCount" class="panel-segmented__count">
+										{{ item.panel_count || 0 }}
+									</span>
+								</el-radio-button>
+							</el-radio-group>
+							<el-tooltip
+								class="box-item"
+								effect="dark"
+								:content="pub.lang('管理分组')"
+								:enterable="false"
+								placement="bottom">
+								<el-button
+									text
+									:icon="Setting"
+									class="panel-segmented__tool"
+									@click="groupManageVisible = true" />
+							</el-tooltip>
+						</div>
+					</div>
+					<el-divider direction="vertical"></el-divider>
+					<div class="panel-control flex items-center flex-shrink-0">
+						<span class="panel-control__label">{{ pub.lang('排序') }}</span>
+						<div ref="sortSegmentRef" class="panel-segmented flex items-center">
+							<el-radio-group
+								v-model="sortMode"
+								class="panel-segmented__group">
+								<span
+									class="panel-segmented__indicator"
+									:style="sortIndicatorStyle" />
+								<el-radio-button
+									v-for="item in sortOptions"
+									:key="item.value"
+									:label="item.label"
+									:value="item.value" />
+							</el-radio-group>
+						</div>
+					</div>
+					<el-divider direction="vertical"></el-divider>
 					<el-switch
 						v-model="isShowIP"
-						size="large"
 						inline-prompt
 						:active-text="pub.lang('隐藏IP')"
 						:inactive-text="pub.lang('显示IP')"
@@ -27,32 +86,13 @@
 						:inactive-action-icon="View"
 						@change="isShowIP = !!isShowIP" />
 					<el-divider direction="vertical"></el-divider>
-					<div class="flex">
-						<el-radio-group :model-value="currentGroupID" @input="switchGroup" size="large">
-							<el-radio-button
-								v-for="item in groupList"
-								:label="item.group_name"
-								:value="item.group_id" />
-						</el-radio-group>
-						<el-tooltip
-							class="box-item"
-							effect="dark"
-							:content="pub.lang('管理分组')"
-							:enterable="false"
-							placement="bottom"
-							><el-button
-								size="large"
-								:icon="Setting"
-								class="ml-[.4rem]"
-								@click="groupManageVisible = true"
-						/></el-tooltip>
-					</div>
-					<el-divider direction="vertical"></el-divider>
-					<el-button
-						size="large"
-						:icon="Refresh"
-						class="mr-[.4rem]"
-						@click="getPanelList()"></el-button>
+					<el-tooltip :content="pub.lang('刷新')" :enterable="false" placement="bottom">
+						<el-button
+							text
+							:icon="Refresh"
+							class="panel-tool-icon mr-[.4rem]"
+							@click="getPanelList()" />
+					</el-tooltip>
 					<div :class="['panel-search', { 'panel-search--active': isActive }]">
 						<el-icon :size="24" class="mr-[1.6rem]">
 							<svg width="24" height="24" viewBox="0 0 24 24" focusable="false" class="NMm5M">
@@ -260,7 +300,7 @@ defineOptions({
 	name: 'Home',
 })
 import { usePanelBase } from '@store/panel'
-import { Setting, Refresh,Hide, View } from '@element-plus/icons-vue'
+import { Setting, Refresh, Hide, View, TopRight } from '@element-plus/icons-vue'
 import { useSettingStore } from '@store/setting'
 import { ElMessageBox } from 'element-plus'
 import { useMessage } from '@utils/hooks/message'
@@ -271,6 +311,7 @@ import installLog from './components/AddPanel/installLog.vue'
 import installResults from './components/AddPanel/installResults.vue'
 import AddGroup from '@views/panel/components/AddGroup/index.vue'
 import White from '@/assets/images/logo-white.svg'
+import LogoGreen from '@/assets/images/logo-green.svg'
 import { pub, getByteUnit } from '@utils/tools'
 import { record_disk, set_panel_sort, type Panel_Params } from './controller'
 import { checkIp } from '@utils/is'
@@ -285,6 +326,7 @@ const { mainHeight } = storeToRefs(useStore)
 
 const {
 	isShowIP,
+	showGroupCount,
 	groupList,
 	groupManageVisible,
 	currentGroupID,
@@ -303,6 +345,35 @@ const sortOptions = [
 	{ label: pub.lang('最新添加'), value: 'latest' },
 	{ label: pub.lang('最早添加'), value: 'earliest' },
 ]
+const groupSegmentRef = ref<HTMLElement | null>(null)
+const sortSegmentRef = ref<HTMLElement | null>(null)
+const groupIndicatorStyle = ref<Record<string, string>>({ opacity: '0', width: '0px' })
+const sortIndicatorStyle = ref<Record<string, string>>({ opacity: '0', width: '0px' })
+
+const updateSegmentIndicator = async (
+	segmentRef: typeof groupSegmentRef,
+	indicatorStyle: typeof groupIndicatorStyle
+) => {
+	await nextTick()
+	const group = segmentRef.value?.querySelector<HTMLElement>('.panel-segmented__group')
+	const activeItem = group?.querySelector<HTMLElement>('.el-radio-button.is-active')
+	if (!activeItem) {
+		indicatorStyle.value = { opacity: '0', width: '0px' }
+		return
+	}
+	indicatorStyle.value = {
+		opacity: '1',
+		width: `${activeItem.offsetWidth}px`,
+		transform: `translate3d(${activeItem.offsetLeft}px, 0, 0)`,
+	}
+}
+
+watch(
+	[currentGroupID, groupList, showGroupCount],
+	() => updateSegmentIndicator(groupSegmentRef, groupIndicatorStyle),
+	{ flush: 'post' }
+)
+watch(sortMode, () => updateSegmentIndicator(sortSegmentRef, sortIndicatorStyle), { flush: 'post' })
 const draggedPanelID = ref<number | null>(null)
 let dragOrderChanged = false
 let dragMoveFrame: number | null = null
@@ -718,6 +789,8 @@ onMounted(() => {
 	getPanelList()
 	// 监听请求负载状态
 	loadStatusSync()
+	updateSegmentIndicator(groupSegmentRef, groupIndicatorStyle)
+	updateSegmentIndicator(sortSegmentRef, sortIndicatorStyle)
 })
 onUnmounted(() => {
 	// 关闭负载状态
@@ -753,6 +826,172 @@ onUnmounted(() => {
 	text-align: center;
 	color: #bdbdbd;
 }
+.panel__header {
+	gap: 2.4rem;
+}
+.panel-primary-actions {
+	.panel-brand {
+		margin-right: 1.6rem;
+		padding-right: 1.6rem;
+		border-right: 1px solid var(--el-border-color-lighter);
+	}
+
+	.panel-brand__logo {
+		width: 2.8rem;
+		height: 3rem;
+		margin-right: 0.9rem;
+		object-fit: contain;
+	}
+
+	.panel-brand__content {
+		display: flex;
+		flex-direction: column;
+		line-height: 1.2;
+	}
+
+	.panel-brand__name {
+		color: var(--el-text-color-primary);
+		font-size: 1.4rem;
+		font-weight: 600;
+		white-space: nowrap;
+	}
+
+	.panel-brand__site {
+		display: inline-flex;
+		align-items: center;
+		width: fit-content;
+		margin-top: 0.3rem;
+		color: var(--el-text-color-secondary);
+		font-size: 1.1rem;
+		text-decoration: none;
+
+		.el-icon {
+			margin-left: 0.3rem;
+		}
+
+		&:hover {
+			color: var(--el-color-primary);
+		}
+	}
+
+	.panel-secondary-action {
+		color: var(--el-text-color-regular);
+
+		&:hover {
+			color: var(--el-color-primary);
+			background-color: var(--el-color-primary-light-9);
+		}
+	}
+}
+.panel-toolbar {
+	gap: 0.4rem;
+}
+.panel-control {
+	gap: 0.8rem;
+}
+.panel-control__label {
+	color: var(--el-text-color-primary);
+	font-size: 1.3rem;
+	font-weight: 600;
+	white-space: nowrap;
+}
+.panel-segmented {
+	box-sizing: border-box;
+	height: 3.4rem;
+	padding: 0.3rem;
+	border: 1px solid var(--el-border-color);
+	border-radius: 999px;
+	background-color: transparent;
+
+	.panel-segmented__group {
+		position: relative;
+		height: 2.6rem;
+		padding: 0;
+		border: 0;
+		border-radius: 999px;
+		background-color: transparent;
+		gap: 0.2rem;
+	}
+
+	.panel-segmented__indicator {
+		position: absolute;
+		top: 0;
+		left: 0;
+		z-index: 0;
+		height: 2.6rem;
+		border-radius: 999px;
+		background-color: #20a43a;
+		box-shadow: 0 2px 5px rgba(14, 102, 32, 0.28);
+		pointer-events: none;
+		transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+			width 0.18s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.12s ease;
+	}
+
+	:deep(.el-radio-button) {
+		z-index: 1;
+	}
+
+	:deep(.el-radio-button__inner) {
+		height: 2.6rem;
+		padding: 0 1.1rem;
+		border: 0 !important;
+		outline: 0 !important;
+		border-radius: 999px !important;
+		color: var(--el-text-color-regular);
+		line-height: 2.6rem;
+		background-color: transparent;
+		box-shadow: none !important;
+		transition: color 0.15s ease;
+	}
+
+	:deep(.el-radio-button__inner:hover) {
+		color: #20a43a;
+		background-color: transparent;
+	}
+
+	:deep(.el-radio-button.is-active .el-radio-button__inner) {
+		color: #ffffff !important;
+		font-weight: 600;
+		background-color: transparent !important;
+		box-shadow: none !important;
+	}
+
+	.panel-segmented__count {
+		margin-left: 0.4rem;
+		font-size: 1.1rem;
+		font-variant-numeric: tabular-nums;
+		opacity: 0.58;
+	}
+
+	:deep(.el-radio-button.is-active) .panel-segmented__count {
+		opacity: 0.86;
+	}
+}
+.panel-segmented__tool {
+	width: 2.6rem;
+	height: 2.6rem;
+	margin-left: 0.2rem;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	color: var(--el-text-color-regular);
+
+	&:hover {
+		color: #20a43a;
+		background-color: var(--el-bg-color);
+	}
+}
+.panel-tool-icon {
+	width: 3.2rem;
+	height: 3.2rem;
+	padding: 0;
+	color: var(--el-text-color-secondary);
+
+	&:hover {
+		color: var(--el-color-primary);
+		background-color: var(--el-color-primary-light-9);
+	}
+}
 .panel-search {
 	background-color: #f2f2f2;
 	border-radius: 8px;
@@ -760,8 +999,8 @@ onUnmounted(() => {
 	align-items: center;
 	padding-left: 1rem;
 	:deep(.el-input) {
-		width: 31.8rem;
-		height: 4.4rem;
+		width: 28rem;
+		height: 3.8rem;
 		.el-input__wrapper {
 			background-color: #f2f2f2;
 			padding-left: 0;

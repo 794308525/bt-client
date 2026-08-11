@@ -14,6 +14,7 @@ declare type proxyOptions = {
 declare type groupOptions = {
 	group_id: number
 	group_name: string
+	panel_count?: number
 }
 /**
  * @description 下拉框格式
