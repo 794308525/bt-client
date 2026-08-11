@@ -44,6 +44,13 @@ export const record_disk = (parent: { panel_id: number; disk_path: string }) => 
 }
 
 /**
+ * @description 保存面板默认展示顺序
+ */
+export const set_panel_sort = (panel_ids: number[]) => {
+	common.send(routes.panel.set_sort.path, { panel_ids })
+}
+
+/**
  * @description 获取面板安装脚本列表
  */
 export async function get_panel_script_list() {

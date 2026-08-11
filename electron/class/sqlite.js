@@ -55,6 +55,7 @@ class Sqlite {
                 this.checkField('ssh_info', 'os_name', 'TEXT', '"Linux"')
                 this.checkField('ssh_info', 'mstsc_options', 'TEXT', '"{}"')
                 this.checkField('ssh_info', 'sort', 'INTEGER', '0')
+                this.checkField('panel_info', 'sort', 'INTEGER', '0')
                 this.checkField('panel_info', 'ov', 'INTEGER', '-1')
                 this.checkField('panel_info', 'server_id', 'TEXT', '""')
                 this.checkField('panel_info', 'current_disk', 'TEXT', '""')
@@ -253,6 +254,7 @@ class Sqlite {
                     \`server_id\` TEXT DEFAULT "",          -- server_id
                     \`proxy_id\` INTEGER DEFAULT 0,              -- 代理ID
                     \`common_use\` INTEGER DEFAULT 0,           -- 常用显示状态 1=显示 0=隐藏
+                    \`sort\` INTEGER DEFAULT 0,                 -- 排序值
                     \`area\` TEXT DEFAULT ""            -- 服务器归属区域
                 )`;
 
