@@ -71,6 +71,10 @@ PanelApi.prototype.request = function(uri,data,callback){
     this.request_to_panel(uri,data,function(response,error){
         if(error){
             return callback(null,error);
+        }else if(response.statusCode >= 300 && response.statusCode < 400){
+            let redirect_error = new Error(response.statusMessage || `HTTP ${response.statusCode}`);
+            redirect_error.code = 'PANEL_HTTP_REDIRECT';
+            return callback(response.body,redirect_error);
         }else if(response.statusCode != 200){
             return callback(response.body,response.statusMessage);
         }else{

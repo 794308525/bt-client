@@ -4,6 +4,7 @@ const { Controller } = require('ee-core');
 const { pub } = require("../class/public.js");
 const { PanelApi } = require("../class/panel_api.js");
 const { PanelApp } = require("../class/panel_app.js");
+const { DeviceProbe } = require("../class/device_probe.js");
 const { dialog } = require('electron');
 const Electron = require('ee-core/electron');
 const Services = require('ee-core/services');
@@ -11,6 +12,7 @@ const os = require("os");
 const { glob } = require('fs');
 global.PanelLoadStatus = { status: false, last_time: 0 }; // 面板负载信息获取状态
 global.PanelActionTime = 0; // 面板操作时间
+const PANEL_PROTOCOL_PROBE_COOLDOWN = 60 * 1000; // 协议探测失败后的冷却时间
 
 /**
  * example
@@ -20,6 +22,8 @@ class PanelController extends Controller {
   constructor(ctx) {
     super(ctx);
     this.TABLE = 'panel_info';
+    this.protocolProbeTimes = new Map();
+    this.deviceProbe = new DeviceProbe({ timeout: 2500, maxConcurrent: 10 });
     global.PanelActionTime = pub.time();
   }
 
@@ -725,6 +729,8 @@ class PanelController extends Controller {
 
     // 是否有修改api_token
     if (find['api_token'] == pdata.api_token) {
+      // APP 密钥中的 URL 可能是协议自动探测前的旧地址，密钥未变时保留已校正的 URL。
+      pdata.url = find.url;
       if (pub.M(this.TABLE).where('panel_id=?', panel_id).update(pdata)) {
         global.socks.syncProxy(); // 同步代理池
         Services.get('user').syncPanelToCloud();
@@ -1078,6 +1084,122 @@ class PanelController extends Controller {
   }
 
   /**
+   * @name 获取相反协议的面板地址
+   * @param {string} url - 面板地址
+   * @returns {string}
+   */
+  get_alternate_protocol_url(url) {
+    if (typeof url !== 'string') return '';
+    if (/^https:\/\//i.test(url)) return url.replace(/^https:\/\//i, 'http://');
+    if (/^http:\/\//i.test(url)) return url.replace(/^http:\/\//i, 'https://');
+    return '';
+  }
+
+  /**
+   * @name 判断是否为网络或协议级错误
+   * @param {*} res - 面板响应
+   * @param {*} err - 请求错误
+   * @returns {boolean}
+   */
+  is_panel_network_error(res, err) {
+    let error_text = '';
+    if (err) {
+      error_text = typeof err === 'string'
+        ? err
+        : `${err.code || ''} ${err.message || ''}`;
+    }
+    if (typeof res === 'string') error_text += ` ${res}`;
+
+    const network_error = /(EPROTO|ERR_SSL|SSL routines|TLS|wrong version number|unknown protocol|socket hang up|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ESOCKETTIMEDOUT|EHOSTUNREACH|ENETUNREACH|ENOTFOUND|EAI_AGAIN|ERR_NAME_NOT_RESOLVED|PANEL_HTTP_REDIRECT|plain HTTP request.*HTTPS|HTTP request.*HTTPS server)/i;
+    return network_error.test(error_text);
+  }
+
+  /**
+   * @name 判断是否需要尝试另一种访问协议
+   * @param {object} panel - 面板信息
+   * @param {*} res - 面板响应
+   * @param {*} err - 请求错误
+   * @returns {boolean}
+   */
+  should_probe_panel_protocol(panel, res, err) {
+    if (!panel || !this.get_alternate_protocol_url(panel.url)) return false;
+    // 只处理连接层、TLS 和协议重定向错误，密钥、白名单等业务错误不触发切换。
+    if (!this.is_panel_network_error(res, err)) return false;
+    const error_text = typeof err === 'string'
+      ? err
+      : `${err && err.code ? err.code : ''} ${err && err.message ? err.message : ''}`;
+    if (/(ENOTFOUND|EAI_AGAIN|ERR_NAME_NOT_RESOLVED)/i.test(error_text)) return false;
+
+    const probe_key = String(panel.panel_id || panel.url);
+    const now = Date.now();
+    const last_probe_time = this.protocolProbeTimes.get(probe_key) || 0;
+    if (now - last_probe_time < PANEL_PROTOCOL_PROBE_COOLDOWN) return false;
+
+    this.protocolProbeTimes.set(probe_key, now);
+    return true;
+  }
+
+  /**
+   * @name 验证面板负载接口响应
+   * @param {*} res - 面板响应
+   * @returns {boolean}
+   */
+  is_valid_panel_load_response(res) {
+    if (!res || typeof res !== 'object' || Array.isArray(res)) return false;
+    if (!res.load || typeof res.load !== 'object') return false;
+    if (!['one', 'five', 'fifteen'].every((key) => Number.isFinite(res.load[key]))) return false;
+    if (!Array.isArray(res.cpu) || res.cpu.length < 2) return false;
+    if (!res.mem || typeof res.mem !== 'object') return false;
+    if (!Number.isFinite(Number(res.mem.memRealUsed)) || !Number.isFinite(Number(res.mem.memTotal))) return false;
+    if (!Array.isArray(res.disk) || res.disk.length === 0) return false;
+    return res.disk.every((disk) => disk
+      && typeof disk.path === 'string'
+      && Array.isArray(disk.size)
+      && disk.size.length >= 4);
+  }
+
+  /**
+   * @name 保存探测成功的面板协议
+   * @param {object} panel - 面板信息
+   * @param {string} new_url - 新面板地址
+   * @returns {object|null}
+   */
+  save_detected_panel_protocol(panel, new_url) {
+    const old_url = panel.url;
+    if (!new_url || new_url === old_url) return null;
+
+    const duplicate_count = pub.M(this.TABLE)
+      .where('url=? and panel_id<>?', [new_url, panel.panel_id])
+      .count();
+    if (duplicate_count > 0) {
+      pub.write_log(0, pub.lang('面板[{}]协议探测成功，但地址[{}]已被其他面板使用', panel.title || old_url, new_url), 1);
+      return null;
+    }
+
+    const update = pub.M(this.TABLE).where('panel_id=?', panel.panel_id).update({
+      url: new_url,
+      status: 0
+    });
+    if (!update) return null;
+
+    panel.url = new_url;
+    panel.status = 0;
+    this.protocolProbeTimes.delete(String(panel.panel_id || old_url));
+
+    const old_protocol = old_url.split(':')[0].toUpperCase();
+    const new_protocol = new_url.split(':')[0].toUpperCase();
+    const panel_name = panel.title || old_url;
+    const msg = new_protocol === 'HTTP'
+      ? pub.lang('面板[{}]已自动从 {} 切换为 {}，当前连接未加密', panel_name, old_protocol, new_protocol)
+      : pub.lang('面板[{}]已自动从 {} 切换为 {}', panel_name, old_protocol, new_protocol);
+
+    pub.write_log(0, msg);
+    Services.get('user').removePanelToCloud(old_url);
+    Services.get('user').syncPanelToCloud();
+    return { url: new_url, protocol: new_protocol.toLowerCase(), msg: msg };
+  }
+
+  /**
    * @name 获取并同步面板负载信息到前端
    * @param {*} channel 
    * @param {*} panel 
@@ -1095,13 +1217,27 @@ class PanelController extends Controller {
       p = new PanelApi(panel.url, panel.api_token, panel);
     }
     
-    p.get_network(function (res, err) {
+    const handle_result = function (client, res, err, protocol_changed, connection_state) {
 			res = that.parseResult(res, err, panel.auth_type);
+      const device_status = connection_state ? connection_state.device_status : 'online';
+      const panel_status = connection_state ? connection_state.panel_status : 'online';
       if (res && res.status === false){
 				// -2表示获取不到授权状态，如果获取不到服务器状态和授权状态，直接将其设置为免费版
 				if(panel.ov === -1) pub.M(that.TABLE).where('panel_id=?', panel.panel_id).update({ ov: 0 })
-				if(panel.status === 0) pub.M(that.TABLE).where('panel_id=?', panel.panel_id).update({ status: 1 })
-        return Electron.mainWindow.webContents.send(channel, { panel_id: panel.panel_id,ov:panel.ov,is_open:true,status:1,data: res });
+				if(panel.status === 0) {
+          pub.M(that.TABLE).where('panel_id=?', panel.panel_id).update({ status: 1 })
+          panel.status = 1;
+          that.update_global_panel_param(panel.panel_id, { status: 1 });
+        }
+        return Electron.mainWindow.webContents.send(channel, {
+          panel_id: panel.panel_id,
+          ov: panel.ov,
+          is_open: true,
+          status: 1,
+          device_status: device_status,
+          panel_status: panel_status,
+          data: res
+        });
 			}
 			if (callback) return callback(res, err);
 			// 重新获取面板信息
@@ -1109,19 +1245,26 @@ class PanelController extends Controller {
 				panel.ov = pub.M(that.TABLE).where('panel_id=?', panel.panel_id).getField('ov');
 			}
       if (err) {
-        return Electron.mainWindow.webContents.send(channel, { panel_id: panel.panel_id,ov:panel.ov, data: { status: false, msg: pub.lang('连接失败: ') + err.message } });
+        return Electron.mainWindow.webContents.send(channel, {
+          panel_id: panel.panel_id,
+          ov: panel.ov,
+          device_status: device_status,
+          panel_status: panel_status,
+          data: { status: false, msg: pub.lang('连接失败: ') + err.message }
+        });
       }
       if (res) {
         // 更新面板标题
-				if (res.title && panel.title == panel.url.match(/\/\/(.*?):/)[1]) pub.M(that.TABLE).where('panel_id=?', panel.panel_id).update({ title: res.title });
+				const panel_host = panel.url.match(/^https?:\/\/([^/:]+)/i);
+				if (res.title && panel_host && panel.title == panel_host[1]) pub.M(that.TABLE).where('panel_id=?', panel.panel_id).update({ title: res.title });
 				// 更新面板状态
 				if (panel.status === 1) {
 					pub.M(that.TABLE).where('panel_id=?', panel.panel_id).update({ status: 0 });
 					that.update_global_panel_param(panel.panel_id, { status: 0 }); // 更新全局面板状态
-				}
+        }
         if(!panel.server_id || panel.ov == -1 || !panel.get_ov){
           // 获取server_id
-          p.get_server_id(function(server_id,version,is_aaPanel){
+          client.get_server_id(function(server_id,version,is_aaPanel){
             if(server_id){
               panel.server_id = server_id;
               let pdata = { server_id: server_id };
@@ -1146,11 +1289,69 @@ class PanelController extends Controller {
 				
         // 发送负载信息到前端
         try {
-          if (channel && Electron.mainWindow.isFocused()) return Electron.mainWindow.webContents.send(channel, { panel_id: panel.panel_id,ov:panel.ov,is_open:panel.is_open,status:0, data: res });
+          if (channel && Electron.mainWindow.isFocused()) {
+            let result = {
+              panel_id: panel.panel_id,
+              ov: panel.ov,
+              is_open: panel.is_open,
+              status: 0,
+              device_status: 'online',
+              panel_status: 'online',
+              data: res
+            };
+            if (protocol_changed) result.protocol_changed = protocol_changed;
+            return Electron.mainWindow.webContents.send(channel, result);
+          }
         } catch (err) {
           pub.log('sync load error:', err.message);
         }
       }
+    };
+
+    const handle_failed_request = function (client, res, err) {
+      if (!that.is_panel_network_error(res, err)) {
+        that.deviceProbe.markReachable(panel);
+        return handle_result(client, res, err, null, {
+          device_status: 'online',
+          panel_status: 'error'
+        });
+      }
+
+      that.deviceProbe.probe(panel, function (device_status) {
+        return handle_result(client, res, err, null, {
+          device_status: device_status,
+          panel_status: device_status === 'online' ? 'error' : 'unknown'
+        });
+      });
+    };
+
+    p.get_network(function (res, err) {
+      if (!that.should_probe_panel_protocol(panel, res, err)) {
+        if (that.is_valid_panel_load_response(that.parseResult(res, err, panel.auth_type))) {
+          that.deviceProbe.markReachable(panel);
+          return handle_result(p, res, err);
+        }
+        return handle_failed_request(p, res, err);
+      }
+
+      const alternate_url = that.get_alternate_protocol_url(panel.url);
+      const alternate_panel = Object.assign({}, panel, { url: alternate_url });
+      const alternate_client = panel.auth_type == 3
+        ? new PanelApp(alternate_url, panel.api_token, alternate_panel)
+        : new PanelApi(alternate_url, panel.api_token, alternate_panel);
+
+      alternate_client.get_network(function (alternate_res, alternate_err) {
+        const parsed_res = that.parseResult(alternate_res, alternate_err, panel.auth_type);
+        const probe_succeeded = !alternate_err
+          && that.is_valid_panel_load_response(parsed_res);
+
+        if (!probe_succeeded) return handle_failed_request(p, res, err);
+
+        const protocol_changed = that.save_detected_panel_protocol(panel, alternate_url);
+        if (!protocol_changed) return handle_failed_request(p, res, err);
+        that.deviceProbe.markReachable(panel);
+        return handle_result(alternate_client, parsed_res, null, protocol_changed);
+      });
     });
   }
 	/**
@@ -1159,7 +1360,7 @@ class PanelController extends Controller {
 	 * @param {object} param - 参数数组 {键:值} 支持同时修改多个参数
 	 */
 	update_global_panel_param(panel_id,param) { 
-		if(!panel_id || !param || !Array.isArray(param) || param.length == 0) return;
+			if(!panel_id || !param || typeof param !== 'object' || Array.isArray(param) || Object.keys(param).length == 0) return;
 		// 遍历全局面板列表，修改参数
 		for (let i = 0; i < global.PanelList.length; i++) {
 			if (global.PanelList[i].panel_id == panel_id) {

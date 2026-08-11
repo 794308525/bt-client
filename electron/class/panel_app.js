@@ -79,6 +79,12 @@ class PanelApp {
                 return callback(null, err);
             }
 
+            if (res.statusCode >= 300 && res.statusCode < 400) {
+                let redirect_error = new Error(res.statusMessage || `HTTP ${res.statusCode}`);
+                redirect_error.code = 'PANEL_HTTP_REDIRECT';
+                return callback(null, redirect_error);
+            }
+
             if (res.body[0] == '{') {
                 let res_body = JSON.parse(res.body);
                 // pub.debug(res_body);
@@ -86,13 +92,13 @@ class PanelApp {
                 return callback(null, err);
             }
 
-            let de_crypt_data = '';
+            let data;
             try {
-                de_crypt_data = pub.aes_decrypt_ecb(res.body, that.KEY);
+                let de_crypt_data = pub.aes_decrypt_ecb(res.body, that.KEY);
+                data = JSON.parse(de_crypt_data);
             } catch (e) {
                 return callback(null, e);
             }
-            let data = JSON.parse(de_crypt_data);
             if (data.status && data.data) data = data.data;
             callback(data, err);
         }, 6000);

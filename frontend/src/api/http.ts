@@ -6,8 +6,11 @@ import routes from '*electron.route.js'
 interface AsyncProps {
 	route: string
 	data: any
+	timeout?: number
 }
 class IpcCommon {
+	private requestId = 0
+
 	time() {
 		return Math.round(new Date().getTime() / 1000)
 	}
@@ -30,16 +33,24 @@ class IpcCommon {
 	}
 
 	//异步发送
-	sendAsync({ route, data }: AsyncProps) {
+	sendAsync({ route, data, timeout }: AsyncProps) {
 		return new Promise((resolve, reject) => {
-			let channel = route
-			ipc.removeAllListeners(channel)
-			ipc.on(channel, (event: any, result: any) => {
+			const channel = `${route}:reply:${Date.now()}:${++this.requestId}`
+			let timer: ReturnType<typeof setTimeout> | null = null
+			const onResult = (event: any, result: any) => {
 				// console.log(channel, result, 'Async')
 				if (result) {
+					if (timer) clearTimeout(timer)
 					resolve(result)
 				}
-			})
+			}
+			ipc.once(channel, onResult)
+			if (timeout && timeout > 0) {
+				timer = setTimeout(() => {
+					ipc.removeListener(channel, onResult)
+					reject(new Error('请求超时'))
+				}, timeout)
+			}
 			let pdata = {
 				channel: channel,
 				data: toRaw(data),
