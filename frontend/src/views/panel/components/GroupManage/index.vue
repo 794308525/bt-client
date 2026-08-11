@@ -12,6 +12,15 @@
 					v-html="pub.lang('分组管理')"></span>
 			</div>
 		</template>
+		<div class="group-count-setting">
+			<div>
+				<div class="group-count-setting__title">{{ pub.lang('显示分组数量') }}</div>
+				<div class="group-count-setting__description">
+					{{ pub.lang('在顶部的分组选项中显示面板数量') }}
+				</div>
+			</div>
+			<el-switch v-model="showGroupCount" />
+		</div>
 		<div>
 			<el-input
 				v-model="newGroupName"
@@ -34,7 +43,7 @@ import { add_group, remove_group } from '../../controller'
 
 const emit = defineEmits(['refresh'])
 
-const { groupList, addGroupVisible, isEditGroup, editGroupParams, groupManageVisible } =
+const { groupList, addGroupVisible, isEditGroup, editGroupParams, groupManageVisible, showGroupCount } =
 	storeToRefs(usePanelBase())
 const newGroupName = ref('')
 const GroupList = ref({
@@ -107,3 +116,25 @@ watch(groupManageVisible, val => {
 	}
 })
 </script>
+<style lang="scss" scoped>
+.group-count-setting {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 1.6rem;
+	padding-bottom: 1.2rem;
+	border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.group-count-setting__title {
+	color: var(--el-text-color-primary);
+	font-size: 1.4rem;
+	font-weight: 500;
+}
+
+.group-count-setting__description {
+	margin-top: 0.3rem;
+	color: var(--el-text-color-secondary);
+	font-size: 1.2rem;
+}
+</style>
