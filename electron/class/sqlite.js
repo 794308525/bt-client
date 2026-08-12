@@ -21,7 +21,7 @@ class Sqlite {
         this.JOIN = ''
         this.UNION = ''
         this.DISTINCT = ''
-        this.ENCRYPT_FIELDS = ['username','password','proxy_username','proxy_password','private_key','api_token','admin_path','server_id']
+        this.ENCRYPT_FIELDS = ['username','password','proxy_username','proxy_password','private_key','api_token','admin_path','server_id','access_key_id','access_key_secret']
         this.NOT_CLONE = false
 
 
@@ -303,6 +303,33 @@ class Sqlite {
 
         if (this.DB_OBJ.prepare(sql).run()){
             console.log('创建[panel_group]表成功')
+        }
+
+        sql = `CREATE TABLE IF NOT EXISTS aliyun_account (
+            \`account_id\` INTEGER PRIMARY KEY AUTOINCREMENT,  -- 阿里云账号ID
+            \`group_id\` INTEGER DEFAULT 0,                   -- 分组ID
+            \`remark\` TEXT DEFAULT "",                      -- 备注
+            \`access_key_id\` TEXT DEFAULT "",               -- AccessKey ID（加密）
+            \`access_key_secret\` TEXT DEFAULT "",           -- AccessKey Secret（加密）
+            \`balance\` TEXT DEFAULT "",                     -- 账号余额
+            \`server_count\` INTEGER DEFAULT -1,              -- 服务器数量，-1为待获取
+            \`domain_count\` INTEGER DEFAULT -1,              -- 域名数量，-1为待获取
+            \`sort\` INTEGER DEFAULT 0,                       -- 默认排序值
+            \`addtime\` INTEGER DEFAULT 0,                    -- 添加时间
+            \`update_time\` INTEGER DEFAULT 0                 -- 更新时间
+        )`
+
+        if (this.DB_OBJ.prepare(sql).run()){
+            console.log('创建[aliyun_account]表成功')
+        }
+
+        sql = `CREATE TABLE IF NOT EXISTS aliyun_group (
+            \`group_id\` INTEGER PRIMARY KEY AUTOINCREMENT,   -- 分组ID
+            \`group_name\` TEXT DEFAULT ""                    -- 分组名称
+        )`
+
+        if (this.DB_OBJ.prepare(sql).run()){
+            console.log('创建[aliyun_group]表成功')
         }
 
 

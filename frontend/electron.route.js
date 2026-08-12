@@ -595,6 +595,38 @@ const routes = {
 		}
 
 	},
+	aliyun: {
+		list: {
+			title: '获取阿里云账号列表',
+			method: 'ipc',
+			path: 'controller.aliyun.list',
+		},
+		save: {
+			title: '新增或修改阿里云账号',
+			method: 'ipc',
+			path: 'controller.aliyun.save',
+		},
+		remove: {
+			title: '删除阿里云账号',
+			method: 'ipc',
+			path: 'controller.aliyun.remove',
+		},
+		add_group: {
+			title: '添加阿里云分组',
+			method: 'ipc',
+			path: 'controller.aliyun.add_group',
+		},
+		modify_group: {
+			title: '修改阿里云分组',
+			method: 'ipc',
+			path: 'controller.aliyun.modify_group',
+		},
+		remove_group: {
+			title: '删除阿里云分组',
+			method: 'ipc',
+			path: 'controller.aliyun.remove_group',
+		},
+	},
 	term: {
 		list: {
 			title: '获取终端列表',

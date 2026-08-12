@@ -164,6 +164,7 @@ class IndexController extends Controller {
         pub.M('panel_info').decryptAll();
         pub.M('ssh_info').decryptAll();
         pub.M('proxy_info').decryptAll();
+        pub.M('aliyun_account').decryptAll();
 
         // 保存密码加密方式
         if(!pub.C('init_password') || pub.C('not_password') === true){
@@ -178,6 +179,7 @@ class IndexController extends Controller {
         pub.M('panel_info').encryptAll();
         pub.M('ssh_info').encryptAll();
         pub.M('proxy_info').encryptAll();
+        pub.M('aliyun_account').encryptAll();
         
         return pub.send_success_msg(event,channel,pub.lang('管理密码设置成功'))
     }
@@ -384,4 +386,4 @@ class IndexController extends Controller {
 }
 
 IndexController.toString = () => '[class IndexController]';
-module.exports = IndexController;  
+module.exports = IndexController;
