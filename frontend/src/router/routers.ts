@@ -29,6 +29,10 @@ export const routeList: Array<RouteRecordRaw> = [
 				component: () => import('@views/aliyun/detail.vue'),
 			},
 			{
+				path: '/aliyun/:accountId/oss/:bucket',
+				component: () => import('@views/aliyun/oss-objects.vue'),
+			},
+			{
 				path: '/toolbox',
 				component: () => import('@views/toolbox/index.vue'),
 			},

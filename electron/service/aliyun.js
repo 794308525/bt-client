@@ -8,6 +8,7 @@ const Domain = require('@alicloud/domain20180129');
 const ActionTrail = require('@alicloud/actiontrail20200706');
 const Swas = require('@alicloud/swas-open20200601');
 const Esa = require('@alicloud/esa20240910');
+const OSS = require('ali-oss');
 const { pub } = require('../class/public.js');
 
 const SUMMARY_TTL = 5 * 60;
@@ -129,6 +130,17 @@ const ESA_RECORD_ERROR_MESSAGES = {
   'SourceCircleExist': '主机记录与源站形成回环，请修改主机记录或源站地址后重试',
 };
 
+const OSS_ERROR_MESSAGES = {
+  AccessDenied: '当前 AccessKey 无权访问 OSS，请检查 RAM 权限',
+  NoSuchBucket: '指定的 OSS Bucket 不存在或已被删除',
+  NoSuchKey: '指定的 OSS 对象不存在或已被删除',
+  BucketAlreadyExists: 'Bucket 名称已被占用，请更换名称',
+  BucketAlreadyOwnedByYou: '当前账号已经拥有该 Bucket',
+  BucketNotEmpty: 'Bucket 不为空，请先删除其中的对象后再删除 Bucket',
+  InvalidBucketName: 'Bucket 名称不正确，请使用 3–63 位小写字母、数字或中划线',
+  TooManyBuckets: 'OSS Bucket 数量已达到账号上限',
+};
+
 class AliyunServiceError extends Error {
   constructor(message, code = 'AliyunError', requestId = '', detail = '') {
     super(message);
@@ -171,7 +183,7 @@ function normalizeError(error) {
       : '',
   ].filter(Boolean).join('\n'));
   const lower = `${code} ${sourceMessage}`.toLowerCase();
-  let message = ESA_RECORD_ERROR_MESSAGES[code] || sourceMessage;
+  let message = ESA_RECORD_ERROR_MESSAGES[code] || OSS_ERROR_MESSAGES[code] || sourceMessage;
 
   if (ESA_RECORD_ERROR_MESSAGES[code]) {
     // 精确错误码翻译优先于后面的通用网络、权限等判断。
@@ -235,7 +247,7 @@ function isCdnNotOpenedError(error) {
 
 class AliyunService {
   updateResourceCount(accountId, field, value) {
-    if (!['server_count', 'domain_count', 'esa_count', 'cdn_count'].includes(field)) return;
+    if (!['server_count', 'domain_count', 'esa_count', 'cdn_count', 'oss_count'].includes(field)) return;
     pub.M('aliyun_account').where('account_id=?', Number(accountId) || 0).update({
       [field]: Math.max(0, Number(value) || 0),
     });
@@ -270,6 +282,270 @@ class AliyunService {
       dns: new AliDns.default({ ...config, endpoint: 'alidns.cn-hangzhou.aliyuncs.com' }),
       ecs: new Ecs.default(config),
       esa: new Esa.default(config),
+    };
+  }
+
+  normalizeOssRegion(region) {
+    const value = String(region || '').trim().toLowerCase();
+    if (!/^oss-[a-z0-9-]+$/.test(value)) throw new AliyunServiceError('OSS 地域不正确', 'InvalidOssRegion');
+    return value;
+  }
+
+  normalizeOssBucketName(bucket) {
+    const value = String(bucket || '').trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(value)) {
+      throw new AliyunServiceError('Bucket 名称必须为 3–63 位小写字母、数字或中划线', 'InvalidBucketName');
+    }
+    return value;
+  }
+
+  normalizeOssObjectName(name) {
+    const value = String(name || '').replace(/^\/+/, '');
+    if (!value || Buffer.byteLength(value) > 1023 || /[\x00-\x1f\x7f]/.test(value)) {
+      throw new AliyunServiceError('OSS 对象名称不正确', 'InvalidObjectName');
+    }
+    return value;
+  }
+
+  createOssClient(account, options = {}) {
+    const region = this.normalizeOssRegion(options.region || 'oss-cn-hangzhou');
+    const bucket = options.bucket ? this.normalizeOssBucketName(options.bucket) : undefined;
+    return new OSS({
+      accessKeyId: account.access_key_id,
+      accessKeySecret: account.access_key_secret,
+      region,
+      bucket,
+      secure: true,
+      timeout: 30000,
+    });
+  }
+
+  ossBucketView(bucket) {
+    const name = this.normalizeOssBucketName(bucket.name);
+    const region = this.normalizeOssRegion(bucket.region);
+    return {
+      name,
+      region,
+      creation_time: bucket.creationDate || '',
+      storage_class: bucket.storageClass || bucket.StorageClass || '',
+      endpoint: `${name}.${region}.aliyuncs.com`,
+    };
+  }
+
+  async fetchOssBuckets(account) {
+    const client = this.createOssClient(account);
+    const buckets = [];
+    let marker = '';
+    do {
+      const result = await this.request(() => client.listBuckets({ marker, 'max-keys': 100 }));
+      buckets.push(...(result.buckets || []).map(item => this.ossBucketView(item)));
+      marker = result.isTruncated && result.nextMarker ? String(result.nextMarker) : '';
+    } while (marker && buckets.length < 1000);
+    return buckets;
+  }
+
+  async getOssCount(account) {
+    return (await this.fetchOssBuckets(account)).length;
+  }
+
+  async listOssBuckets(accountId, options = {}) {
+    const account = this.getAccount(accountId);
+    const keyword = String(options.keyword || '').trim().toLowerCase();
+    const page = Math.max(1, Number(options.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(options.page_size) || 20));
+    const buckets = (await this.fetchOssBuckets(account))
+      .filter(item => !keyword || item.name.includes(keyword) || item.region.includes(keyword));
+    const pageBuckets = buckets.slice((page - 1) * pageSize, page * pageSize);
+    const data = options.include_stat === false ? pageBuckets : await mapLimit(pageBuckets, MAX_REGION_CONCURRENCY, async bucket => {
+      try {
+        const client = this.createOssClient(account, { bucket: bucket.name, region: bucket.region });
+        const result = await this.request(() => client.getBucketStat(bucket.name));
+        return {
+          ...bucket,
+          object_count: Number(result.stat && result.stat.ObjectCount || 0),
+          storage_size: Number(result.stat && result.stat.Storage || 0),
+          stat_error: '',
+        };
+      } catch (error) {
+        const normalized = normalizeError(error);
+        return {
+          ...bucket,
+          object_count: null,
+          storage_size: null,
+          stat_error: normalized.message,
+        };
+      }
+    });
+    if (!keyword) this.updateResourceCount(accountId, 'oss_count', buckets.length);
+    return {
+      data,
+      total: buckets.length,
+      page,
+      page_size: pageSize,
+    };
+  }
+
+  async createOssBucket(accountId, data = {}) {
+    const account = this.getAccount(accountId);
+    const name = this.normalizeOssBucketName(data.name);
+    const region = this.normalizeOssRegion(data.region);
+    const storageClass = String(data.storage_class || 'Standard');
+    const acl = String(data.acl || 'private');
+    if (!['Standard', 'IA', 'Archive', 'ColdArchive', 'DeepColdArchive'].includes(storageClass)) {
+      throw new AliyunServiceError('OSS 存储类型不正确', 'InvalidStorageClass');
+    }
+    if (!['private', 'public-read', 'public-read-write'].includes(acl)) {
+      throw new AliyunServiceError('OSS 访问权限不正确', 'InvalidBucketAcl');
+    }
+    const client = this.createOssClient(account, { region });
+    await this.request(() => client.putBucket(name, { storageClass, acl }));
+    this.clearAccountCache(accountId);
+    return this.ossBucketView({ name, region, storageClass, creationDate: new Date().toISOString() });
+  }
+
+  async deleteOssBucket(accountId, bucket, region) {
+    const account = this.getAccount(accountId);
+    const name = this.normalizeOssBucketName(bucket);
+    const client = this.createOssClient(account, { bucket: name, region });
+    await this.request(() => client.deleteBucket(name));
+    this.clearAccountCache(accountId);
+    return { name };
+  }
+
+  async listOssObjects(accountId, options = {}) {
+    const account = this.getAccount(accountId);
+    const bucket = this.normalizeOssBucketName(options.bucket);
+    const region = this.normalizeOssRegion(options.region);
+    const prefix = String(options.prefix || '').replace(/^\/+/, '').slice(0, 1023);
+    const marker = String(options.marker || '').slice(0, 1023);
+    const pageSize = Math.min(100, Math.max(1, Number(options.page_size) || 20));
+    const page = Math.max(1, Number(options.page) || 1);
+    const sort = ['size_desc', 'size_asc', 'modified_desc', 'modified_asc'].includes(String(options.sort))
+      ? String(options.sort)
+      : 'name';
+    const client = this.createOssClient(account, { bucket, region });
+    const imagePattern = /\.(?:avif|bmp|gif|ico|jfif|jpe?g|pjp|pjpeg|png|svg|webp)$/i;
+    const objectView = item => {
+      const name = String(item.name || '');
+      const isDirectory = name.endsWith('/');
+      return {
+        name,
+        size: isDirectory ? 0 : Number(item.size || 0),
+        is_directory: isDirectory,
+        last_modified: item.lastModified || '',
+        etag: String(item.etag || '').replace(/^"|"$/g, ''),
+        storage_class: item.storageClass || item.type || '',
+        preview_url: !isDirectory && imagePattern.test(name)
+          ? client.signatureUrl(name, { expires: 300 })
+          : '',
+      };
+    };
+    const directoryView = name => ({
+      name: String(name),
+      size: 0,
+      is_directory: true,
+      last_modified: '',
+      etag: '',
+      storage_class: '',
+      preview_url: '',
+    });
+    const mergePage = result => {
+      const directories = (result.prefixes || []).map(directoryView);
+      const directoryNames = new Set(directories.map(item => item.name));
+      return [...directories, ...(result.objects || []).map(objectView).filter(item => !directoryNames.has(item.name))];
+    };
+
+    if (sort === 'name') {
+      const result = await this.request(() => client.list({ prefix, marker, delimiter: '/', 'max-keys': pageSize }));
+      return {
+        data: mergePage(result),
+        next_marker: result.isTruncated ? String(result.nextMarker || '') : '',
+        total: null,
+        page,
+        sort,
+        prefix,
+        page_size: pageSize,
+      };
+    }
+
+    const allItems = [];
+    let scanMarker = '';
+    do {
+      const result = await this.request(() => client.list({ prefix, marker: scanMarker, delimiter: '/', 'max-keys': 1000 }));
+      allItems.push(...mergePage(result));
+      scanMarker = result.isTruncated && result.nextMarker ? String(result.nextMarker) : '';
+    } while (scanMarker);
+    const uniqueItems = Array.from(new Map(allItems.map(item => [item.name, item])).values());
+    const timeValue = item => {
+      const value = new Date(item.last_modified || '').getTime();
+      return Number.isNaN(value) ? 0 : value;
+    };
+    uniqueItems.sort((left, right) => {
+      if (left.is_directory !== right.is_directory) return left.is_directory ? -1 : 1;
+      if (left.is_directory) return left.name.localeCompare(right.name);
+      const leftValue = sort.startsWith('size') ? left.size : timeValue(left);
+      const rightValue = sort.startsWith('size') ? right.size : timeValue(right);
+      const difference = leftValue - rightValue;
+      return difference ? (sort.endsWith('_asc') ? difference : -difference) : left.name.localeCompare(right.name);
+    });
+    const offset = (page - 1) * pageSize;
+    return {
+      data: uniqueItems.slice(offset, offset + pageSize),
+      next_marker: '',
+      total: uniqueItems.length,
+      page,
+      sort,
+      prefix,
+      page_size: pageSize,
+    };
+  }
+
+  async uploadOssObjects(accountId, data, filePaths) {
+    const account = this.getAccount(accountId);
+    const bucket = this.normalizeOssBucketName(data.bucket);
+    const region = this.normalizeOssRegion(data.region);
+    const prefix = String(data.prefix || '').replace(/^\/+|\/+$/g, '');
+    const client = this.createOssClient(account, { bucket, region });
+    const results = [];
+    for (const file of filePaths) {
+      const objectName = this.normalizeOssObjectName([prefix, require('path').basename(file)].filter(Boolean).join('/'));
+      await this.request(() => client.put(objectName, file));
+      results.push({ name: objectName });
+    }
+    return results;
+  }
+
+  async downloadOssObject(accountId, data, destination) {
+    const account = this.getAccount(accountId);
+    const bucket = this.normalizeOssBucketName(data.bucket);
+    const region = this.normalizeOssRegion(data.region);
+    const objectName = this.normalizeOssObjectName(data.object_name);
+    const client = this.createOssClient(account, { bucket, region });
+    await this.request(() => client.get(objectName, destination));
+    return { name: objectName };
+  }
+
+  async deleteOssObjects(accountId, data = {}) {
+    const account = this.getAccount(accountId);
+    const bucket = this.normalizeOssBucketName(data.bucket);
+    const region = this.normalizeOssRegion(data.region);
+    const names = unique((Array.isArray(data.object_names) ? data.object_names : []).map(item => this.normalizeOssObjectName(item)));
+    if (!names.length) throw new AliyunServiceError('请先选择 OSS 对象', 'ObjectRequired');
+    if (names.length > 100) throw new AliyunServiceError('单次最多删除 100 个 OSS 对象', 'TooManyObjects');
+    const client = this.createOssClient(account, { bucket, region });
+    const results = await mapLimit(names, MAX_REGION_CONCURRENCY, async name => {
+      try {
+        await this.request(() => client.delete(name));
+        return { name, success: true };
+      } catch (error) {
+        const normalized = normalizeError(error);
+        return { name, success: false, message: normalized.message, errorCode: normalized.code, requestId: normalized.requestId };
+      }
+    });
+    return {
+      success_count: results.filter(item => item.success).length,
+      failure_count: results.filter(item => !item.success).length,
+      failures: results.filter(item => !item.success),
     };
   }
 
@@ -442,11 +718,12 @@ class AliyunService {
       return this.safeAccount(account);
     }
 
-    const [balanceResult, domainResult, esaResult, cdnResult, ecsResult, swasResult] = await Promise.allSettled([
+    const [balanceResult, domainResult, esaResult, cdnResult, ossResult, ecsResult, swasResult] = await Promise.allSettled([
       this.queryBalance(account),
       this.getDomainCount(account),
       this.getEsaCount(account),
       this.getCdnCount(account),
+      this.getOssCount(account),
       this.getResourceCount(account, 'ecs'),
       this.getResourceCount(account, 'swas'),
     ]);
@@ -480,6 +757,9 @@ class AliyunService {
       update.cdn_status = cdnResult.value.status;
     }
     else addError('CDN', cdnResult.reason);
+
+    if (ossResult.status === 'fulfilled') update.oss_count = ossResult.value;
+    else addError('OSS', ossResult.reason);
 
     let serverCount = 0;
     let hasServerResult = false;
@@ -525,6 +805,7 @@ class AliyunService {
       esa_count: Number(account.esa_count),
       cdn_count: Number(account.cdn_count),
       cdn_status: account.cdn_status || 'unknown',
+      oss_count: Number(account.oss_count),
       sort: Number(account.sort),
       addtime: Number(account.addtime),
       update_time: Number(account.update_time),

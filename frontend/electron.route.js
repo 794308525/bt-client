@@ -706,6 +706,13 @@ const routes = {
 			method: 'ipc',
 			path: 'controller.aliyun.cdn_operation_logs',
 		},
+		oss_bucket_list: { title: '获取 OSS Bucket 列表', method: 'ipc', path: 'controller.aliyun.oss_bucket_list' },
+		oss_bucket_create: { title: '创建 OSS Bucket', method: 'ipc', path: 'controller.aliyun.oss_bucket_create' },
+		oss_bucket_delete: { title: '删除 OSS Bucket', method: 'ipc', path: 'controller.aliyun.oss_bucket_delete' },
+		oss_object_list: { title: '获取 OSS 对象列表', method: 'ipc', path: 'controller.aliyun.oss_object_list' },
+		oss_object_upload: { title: '上传 OSS 对象', method: 'ipc', path: 'controller.aliyun.oss_object_upload' },
+		oss_object_download: { title: '下载 OSS 对象', method: 'ipc', path: 'controller.aliyun.oss_object_download' },
+		oss_object_delete: { title: '删除 OSS 对象', method: 'ipc', path: 'controller.aliyun.oss_object_delete' },
 		record_list: {
 			title: '获取阿里云解析记录列表',
 			method: 'ipc',
