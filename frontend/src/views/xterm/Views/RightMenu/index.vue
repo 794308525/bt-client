@@ -4,7 +4,7 @@
 		<el-tab-pane :label="pub.lang('录像审计')" name="record"
 			><record :data="data" @refresh="refresh" v-if="activeName === 'record'"
 		/></el-tab-pane>
-		<el-tab-pane :label="pub.lang('文件管理')" name="file"
+		<el-tab-pane v-if="data?.transport !== 'aliyun-session'" :label="pub.lang('文件管理')" name="file"
 			><file :data="data" v-if="activeName === 'file'"
 		/></el-tab-pane>
 	</el-tabs>

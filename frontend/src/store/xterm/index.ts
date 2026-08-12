@@ -17,6 +17,7 @@ export const useXtermBase = defineStore('xtermBase', () => {
 		filename: '',
 		status: false,
 	})
+	const pendingLaunch = ref<any | null>(null)
 	// 重置终端区域文件上传
 	function resetCommandUpload() {
 		commadUpload.value = {
@@ -26,6 +27,14 @@ export const useXtermBase = defineStore('xtermBase', () => {
 			status: false,
 		}
 	}
+	function queueLaunch(data: any) {
+		pendingLaunch.value = data
+	}
+	function consumeLaunch() {
+		const data = pendingLaunch.value
+		pendingLaunch.value = null
+		return data
+	}
 	return {
 		serverSort,
 		testConnectionDialog,
@@ -33,5 +42,8 @@ export const useXtermBase = defineStore('xtermBase', () => {
 		testCodeStatus,
 		commadUpload,
 		resetCommandUpload,
+		pendingLaunch,
+		queueLaunch,
+		consumeLaunch,
 	}
 })
