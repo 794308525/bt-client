@@ -9,6 +9,9 @@
 					<h1>{{ pub.lang('阿里云账号') }}</h1>
 					<p>{{ pub.lang('集中管理阿里云账号与云资源') }}</p>
 				</div>
+				<el-button :icon="Refresh" :loading="refreshingAll" @click="refreshAllAccounts">
+					{{ pub.lang('刷新全部') }}
+				</el-button>
 				<el-button type="primary" size="large" :icon="Plus" @click="openAccountDialog()">
 					{{ pub.lang('添加账号') }}
 				</el-button>
@@ -17,36 +20,38 @@
 			<div class="aliyun-toolbar">
 				<div class="aliyun-control">
 					<span class="aliyun-control__label">{{ pub.lang('分组') }}</span>
-					<el-radio-group v-model="currentGroup" class="aliyun-segmented">
-						<el-radio-button
-							v-for="group in groupList"
-							:key="group.group_id"
-							:value="group.group_id">
-							{{ group.group_name }}
-							<span class="aliyun-segmented__count">{{ group.account_count || 0 }}</span>
-						</el-radio-button>
-					</el-radio-group>
-					<el-tooltip :content="pub.lang('管理分组')" :enterable="false" placement="bottom">
-						<el-button
-							text
-							:icon="Setting"
-							class="aliyun-tool"
-							@click="groupDialogVisible = true" />
-					</el-tooltip>
+					<div ref="groupSegmentRef" class="aliyun-segmented">
+						<el-radio-group v-model="currentGroup" class="aliyun-segmented__group">
+							<span class="aliyun-segmented__indicator" :style="groupIndicatorStyle" />
+							<el-radio-button
+								v-for="group in groupList"
+								:key="group.group_id"
+								:value="group.group_id">
+								{{ group.group_name }}
+								<span class="aliyun-segmented__count">{{ group.account_count || 0 }}</span>
+							</el-radio-button>
+						</el-radio-group>
+						<el-tooltip :content="pub.lang('管理分组')" :enterable="false" placement="bottom">
+							<el-button text :icon="Setting" class="aliyun-segmented__tool" @click="groupDialogVisible = true" />
+						</el-tooltip>
+					</div>
 				</div>
-
+				<el-divider direction="vertical" />
 				<div class="aliyun-control">
 					<span class="aliyun-control__label">{{ pub.lang('排序') }}</span>
-					<el-radio-group v-model="sortMode" class="aliyun-segmented">
-						<el-radio-button
-							v-for="option in sortOptions"
-							:key="option.value"
-							:value="option.value">
-							{{ option.label }}
-						</el-radio-button>
-					</el-radio-group>
+					<div ref="sortSegmentRef" class="aliyun-segmented">
+						<el-radio-group v-model="sortMode" class="aliyun-segmented__group">
+							<span class="aliyun-segmented__indicator" :style="sortIndicatorStyle" />
+							<el-radio-button
+								v-for="option in sortOptions"
+								:key="option.value"
+								:value="option.value">
+								{{ option.label }}
+							</el-radio-button>
+						</el-radio-group>
+					</div>
 				</div>
-
+				<el-divider direction="vertical" />
 				<el-input
 					v-model="searchKeyword"
 					clearable
@@ -61,6 +66,7 @@
 				v-for="account in filteredAccounts"
 				:key="account.account_id"
 				class="aliyun-card"
+				@click="openAccountDetail(account)"
 				shadow="hover">
 				<template #header>
 					<div class="aliyun-card__header">
@@ -76,9 +82,10 @@
 						<el-dropdown
 							trigger="click"
 							@command="command => handleAccountCommand(command, account)">
-							<el-button text :icon="MoreFilled" class="aliyun-card__more" @click.stop />
+							<el-button text :icon="MoreFilled" :loading="refreshingAccounts.has(account.account_id)" class="aliyun-card__more" @click.stop />
 							<template #dropdown>
 								<el-dropdown-menu>
+									<el-dropdown-item command="refresh" :icon="Refresh">{{ pub.lang('刷新') }}</el-dropdown-item>
 									<el-dropdown-item command="edit">{{ pub.lang('编辑') }}</el-dropdown-item>
 									<el-dropdown-item command="remove" divided>{{
 										pub.lang('删除')
@@ -90,22 +97,36 @@
 				</template>
 
 				<div class="aliyun-balance">
-					<span>{{ pub.lang('账号余额') }}</span>
 					<strong>{{ formatBalance(account.balance) }}</strong>
+					<span>{{ pub.lang('余额') }}</span>
 				</div>
 				<div class="aliyun-resource-list">
 					<div class="aliyun-resource">
+						<span class="aliyun-resource__unit">{{ pub.lang('服务器') }}</span>
 						<span class="aliyun-resource__value">{{ formatCount(account.server_count) }}</span>
-						<span class="aliyun-resource__unit">{{ pub.lang('台服务器') }}</span>
 					</div>
 					<div class="aliyun-resource">
+						<span class="aliyun-resource__unit">{{ pub.lang('域名') }}</span>
 						<span class="aliyun-resource__value">{{ formatCount(account.domain_count) }}</span>
-						<span class="aliyun-resource__unit">{{ pub.lang('条域名') }}</span>
+					</div>
+					<div class="aliyun-resource">
+						<span class="aliyun-resource__unit">ESA</span>
+						<span class="aliyun-resource__value">{{ formatCount(account.esa_count) }}</span>
+					</div>
+					<div class="aliyun-resource">
+						<span class="aliyun-resource__unit">CDN</span>
+						<span class="aliyun-resource__value aliyun-resource__value--status" v-if="account.cdn_status === 'not_opened'">{{ pub.lang('未开通') }}</span>
+						<span v-else class="aliyun-resource__value">{{ formatCount(account.cdn_count) }}</span>
 					</div>
 				</div>
 				<div class="aliyun-card__footer">
-					<span>{{ getGroupName(account.group_id) }}</span>
-					<span>{{ pub.lang('资源数据待获取') }}</span>
+					<div class="aliyun-card__meta">
+						<span class="aliyun-card__group">{{ getGroupName(account.group_id) }}</span>
+						<el-tooltip v-if="account.resource_error" :content="account.resource_error" placement="top">
+							<span class="aliyun-card__error">{{ pub.lang('部分数据获取失败') }}</span>
+						</el-tooltip>
+						<span v-else>{{ formatRefreshTime(account.resource_refresh_time) }}</span>
+					</div>
 				</div>
 			</el-card>
 		</div>
@@ -211,9 +232,9 @@
 </template>
 
 <script setup lang="ts">
-import { MoreFilled, Plus, Search, Setting } from '@element-plus/icons-vue'
+import { MoreFilled, Plus, Refresh, Search, Setting } from '@element-plus/icons-vue'
 import { ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { common, routes } from '@api/http'
+import { common, ipc, routes } from '@api/http'
 import { useMessage } from '@utils/hooks/message'
 import { pub } from '@utils/tools'
 
@@ -231,9 +252,15 @@ interface AliyunAccount {
 	balance: string
 	server_count: number
 	domain_count: number
+	esa_count: number
+	cdn_count: number
+	cdn_status: 'active' | 'not_opened' | 'unknown'
 	sort: number
 	addtime: number
 	update_time: number
+	balance_currency: string
+	resource_refresh_time: number
+	resource_error: string
 }
 
 type SortMode = 'default' | 'latest' | 'earliest'
@@ -241,6 +268,7 @@ type SortMode = 'default' | 'latest' | 'earliest'
 defineOptions({ name: 'Aliyun' })
 
 const Message = useMessage()
+const router = useRouter()
 const accountList = ref<AliyunAccount[]>([])
 const groupList = ref<AliyunGroup[]>([
 	{ group_id: -1, group_name: pub.lang('全部'), account_count: 0 },
@@ -254,6 +282,31 @@ const sortOptions: Array<{ label: string; value: SortMode }> = [
 	{ label: pub.lang('最新添加'), value: 'latest' },
 	{ label: pub.lang('最早添加'), value: 'earliest' },
 ]
+const groupSegmentRef = ref<HTMLElement | null>(null)
+const sortSegmentRef = ref<HTMLElement | null>(null)
+const groupIndicatorStyle = ref<Record<string, string>>({ opacity: '0', width: '0px' })
+const sortIndicatorStyle = ref<Record<string, string>>({ opacity: '0', width: '0px' })
+
+const updateSegmentIndicator = async (
+	segmentRef: typeof groupSegmentRef,
+	indicatorStyle: typeof groupIndicatorStyle
+) => {
+	await nextTick()
+	const group = segmentRef.value?.querySelector<HTMLElement>('.aliyun-segmented__group')
+	const activeItem = group?.querySelector<HTMLElement>('.el-radio-button.is-active')
+	if (!activeItem) {
+		indicatorStyle.value = { opacity: '0', width: '0px' }
+		return
+	}
+	indicatorStyle.value = {
+		opacity: '1',
+		width: `${activeItem.offsetWidth}px`,
+		transform: `translate3d(${activeItem.offsetLeft}px, 0, 0)`,
+	}
+}
+
+watch([currentGroup, groupList], () => updateSegmentIndicator(groupSegmentRef, groupIndicatorStyle), { flush: 'post' })
+watch(sortMode, () => updateSegmentIndicator(sortSegmentRef, sortIndicatorStyle), { flush: 'post' })
 
 const accountDialogVisible = ref(false)
 const accountSaving = ref(false)
@@ -283,6 +336,8 @@ const accountRules = computed<FormRules>(() => ({
 
 const groupDialogVisible = ref(false)
 const newGroupName = ref('')
+const refreshingAccounts = reactive(new Set<number>())
+const refreshingAll = ref(false)
 
 const accountGroupOptions = computed(() => groupList.value.filter(group => group.group_id !== -1))
 const filteredAccounts = computed(() => {
@@ -302,7 +357,7 @@ const filteredAccounts = computed(() => {
 })
 
 const request = (route: string, data: Record<string, unknown> = {}) => {
-	return new Promise<any>(resolve => common.send(route, data, resolve))
+	return common.sendAsync({ route, data, timeout: 120000 }) as Promise<any>
 }
 
 const getAccountList = async () => {
@@ -311,6 +366,41 @@ const getAccountList = async () => {
 	accountList.value = result.data.data || []
 	groupList.value = result.data.groups || []
 	if (!groupList.value.some(group => group.group_id === currentGroup.value)) currentGroup.value = -1
+	const now = Math.floor(Date.now() / 1000)
+	accountList.value
+		.filter(account => !account.resource_refresh_time || now - account.resource_refresh_time >= 300)
+		.forEach(account => refreshAccount(account, false))
+}
+
+const openAccountDetail = (account: AliyunAccount) => router.push(`/aliyun/${account.account_id}`)
+
+const refreshAccount = async (account: AliyunAccount, force: boolean) => {
+	if (refreshingAccounts.has(account.account_id)) return
+	refreshingAccounts.add(account.account_id)
+	try {
+		const result = await request(routes.aliyun.refresh_account_summary.path, {
+			account_id: account.account_id,
+			force,
+		})
+		if (!result?.status) {
+			if (force) Message.request(result)
+			return
+		}
+		const index = accountList.value.findIndex(item => item.account_id === account.account_id)
+		if (index !== -1) accountList.value[index] = result.data
+	} finally {
+		refreshingAccounts.delete(account.account_id)
+	}
+}
+
+const refreshAllAccounts = async () => {
+	if (refreshingAll.value) return
+	refreshingAll.value = true
+	try {
+		await Promise.all(accountList.value.map(account => refreshAccount(account, true)))
+	} finally {
+		refreshingAll.value = false
+	}
 }
 
 const openAccountDialog = (account?: AliyunAccount) => {
@@ -351,6 +441,7 @@ const saveAccount = async () => {
 }
 
 const handleAccountCommand = (command: string, account: AliyunAccount) => {
+	if (command === 'refresh') refreshAccount(account, true)
 	if (command === 'edit') openAccountDialog(account)
 	if (command === 'remove') removeAccount(account)
 }
@@ -424,12 +515,45 @@ const formatBalance = (balance: string) => {
 	return `¥ ${balance}`
 }
 
+const formatRefreshTime = (time: number) => {
+	if (!time) return pub.lang('资源数据待获取')
+	const seconds = Math.max(0, Math.floor(Date.now() / 1000) - time)
+	if (seconds < 60) return pub.lang('刚刚更新')
+	if (seconds < 3600) return pub.lang('{} 分钟前', Math.floor(seconds / 60))
+	if (seconds < 86400) return pub.lang('{} 小时前', Math.floor(seconds / 3600))
+	return pub.lang('{} 天前', Math.floor(seconds / 86400))
+}
+
 const formatCount = (count: number) => (Number(count) >= 0 ? Number(count) : '--')
 const getGroupName = (groupId: number) => {
 	return groupList.value.find(group => group.group_id === groupId)?.group_name || pub.lang('默认')
 }
 
-onMounted(getAccountList)
+const refreshCurrentPage = () => refreshAllAccounts()
+const handleRefreshShortcut = (event: KeyboardEvent) => {
+	if (
+		event.key.toLowerCase() !== 'r' ||
+		(!event.ctrlKey && !event.metaKey) ||
+		event.altKey ||
+		event.shiftKey
+	) return
+	event.preventDefault()
+	event.stopPropagation()
+	refreshCurrentPage()
+}
+const handleIpcRefresh = () => refreshCurrentPage()
+
+onMounted(() => {
+	window.addEventListener('keydown', handleRefreshShortcut, true)
+	ipc.on('aliyun-refresh', handleIpcRefresh)
+	getAccountList()
+	updateSegmentIndicator(groupSegmentRef, groupIndicatorStyle)
+	updateSegmentIndicator(sortSegmentRef, sortIndicatorStyle)
+})
+onBeforeUnmount(() => {
+	window.removeEventListener('keydown', handleRefreshShortcut, true)
+	ipc.removeListener('aliyun-refresh', handleIpcRefresh)
+})
 </script>
 
 <style scoped lang="scss">
@@ -499,12 +623,12 @@ onMounted(getAccountList)
 
 .aliyun-toolbar {
 	justify-content: flex-end;
-	gap: 1.2rem;
+	gap: 0.4rem;
 	min-width: 0;
 }
 
 .aliyun-control {
-	gap: 0.7rem;
+	gap: 0.8rem;
 }
 
 .aliyun-control__label {
@@ -514,28 +638,67 @@ onMounted(getAccountList)
 }
 
 .aliyun-segmented {
+	display: flex;
+	align-items: center;
 	box-sizing: border-box;
-	height: 3.6rem;
+	height: 3.4rem;
 	padding: 0.3rem;
 	border: 1px solid var(--el-border-color);
 	border-radius: 999px;
 	background: transparent;
 
+	.aliyun-segmented__group {
+		position: relative;
+		display: flex;
+		height: 2.6rem;
+		padding: 0;
+		border: 0;
+		border-radius: 999px;
+		background: transparent;
+		gap: 0.2rem;
+	}
+
+	.aliyun-segmented__indicator {
+		position: absolute;
+		top: 0;
+		left: 0;
+		z-index: 0;
+		height: 2.6rem;
+		border-radius: 999px;
+		background-color: #ff6a00;
+		box-shadow: 0 2px 5px rgba(204, 74, 0, 0.28);
+		pointer-events: none;
+		transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+			width 0.18s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.12s ease;
+	}
+
+	:deep(.el-radio-button) {
+		z-index: 1;
+	}
+
 	:deep(.el-radio-button__inner) {
-		height: 2.8rem;
-		padding: 0 1rem;
+		height: 2.6rem;
+		padding: 0 1.1rem;
 		border: 0 !important;
+		outline: 0 !important;
 		border-radius: 999px !important;
 		color: var(--el-text-color-regular);
-		line-height: 2.8rem;
+		line-height: 2.6rem;
 		background: transparent;
 		box-shadow: none !important;
+		transition: color 0.15s ease;
+	}
+
+	:deep(.el-radio-button__inner:hover) {
+		color: #ff6a00;
+		background: transparent;
 	}
 
 	:deep(.el-radio-button.is-active .el-radio-button__inner) {
-		color: #fff;
+		color: #fff !important;
 		font-weight: 600;
-		background: #ff6a00;
+		background: transparent !important;
+		box-shadow: none !important;
 	}
 }
 
@@ -545,10 +708,19 @@ onMounted(getAccountList)
 	opacity: 0.7;
 }
 
-.aliyun-tool {
-	width: 3.2rem;
-	height: 3.2rem;
+.aliyun-segmented__tool {
+	width: 2.6rem;
+	height: 2.6rem;
+	margin-left: 0.2rem;
 	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	color: var(--el-text-color-regular);
+
+	&:hover {
+		color: #ff6a00;
+		background-color: var(--el-bg-color);
+	}
 }
 
 .aliyun-search {
@@ -566,16 +738,21 @@ onMounted(getAccountList)
 }
 
 .aliyun-card {
-	border-radius: 1.2rem;
-	cursor: default;
+	border-radius: 0.8rem;
+	cursor: pointer;
 
 	:deep(.el-card__header) {
-		padding: 1.5rem 1.8rem;
+		padding: 1.25rem 1.5rem;
+		border-bottom: 0;
 	}
 
 	:deep(.el-card__body) {
-		padding: 1.8rem;
+		padding: 0 1.5rem 1.25rem;
 	}
+}
+
+.aliyun-card__error {
+	color: var(--el-color-danger);
 }
 
 .aliyun-card__header {
@@ -589,22 +766,22 @@ onMounted(getAccountList)
 }
 
 .aliyun-card__logo {
-	width: 3.8rem;
-	height: 3.8rem;
+	width: 3.4rem;
+	height: 3.4rem;
 	flex-shrink: 0;
-	border-radius: 1rem;
+	border-radius: 0.8rem;
 }
 
 .aliyun-card__remark {
 	overflow: hidden;
-	font-size: 1.5rem;
+	font-size: 1.45rem;
 	font-weight: 600;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
 .aliyun-card__key {
-	margin-top: 0.3rem;
+	margin-top: 0.15rem;
 	color: var(--el-text-color-secondary);
 	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 	font-size: 1.15rem;
@@ -618,39 +795,59 @@ onMounted(getAccountList)
 
 .aliyun-balance {
 	display: flex;
-	align-items: baseline;
-	justify-content: space-between;
-	padding-bottom: 1.6rem;
-	border-bottom: 1px solid var(--el-border-color-lighter);
+	align-items: flex-start;
+	padding: 0.8rem 0 1.1rem;
+	flex-direction: column;
 
 	span {
+		margin-top: 0.15rem;
 		color: var(--el-text-color-secondary);
 		font-size: 1.25rem;
 	}
 
 	strong {
 		color: #ff6a00;
-		font-size: 2rem;
+		font-size: 2.05rem;
 		font-weight: 650;
+		font-variant-numeric: tabular-nums;
 	}
 }
 
 .aliyun-resource-list {
-	padding: 1.6rem 0;
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 1rem 2.4rem;
+	padding: 1.1rem 0;
+	border-top: 1px solid var(--el-border-color-lighter);
 }
 
 .aliyun-resource {
-	flex: 1;
-	text-align: center;
+	display: flex;
+	align-items: flex-start;
+	min-width: 0;
+	flex-direction: column;
 
-	& + & {
-		border-left: 1px solid var(--el-border-color-lighter);
+	.aliyun-resource__unit {
+		margin: 0;
+		font-size: 1.1rem;
+	}
+
+	.aliyun-resource__value {
+		margin-top: 0.15rem;
+		font-size: 1.65rem;
 	}
 }
 
 .aliyun-resource__value {
-	font-size: 2rem;
+	font-size: 2.1rem;
 	font-weight: 650;
+	font-variant-numeric: tabular-nums;
+}
+
+.aliyun-resource__value--status {
+	color: var(--el-text-color-placeholder);
+	font-size: 1.25rem !important;
+	font-weight: 500;
 }
 
 .aliyun-resource__unit {
@@ -660,11 +857,22 @@ onMounted(getAccountList)
 }
 
 .aliyun-card__footer {
-	justify-content: space-between;
-	padding-top: 1.2rem;
+	min-height: 2.4rem;
+	padding-top: 0.8rem;
 	border-top: 1px solid var(--el-border-color-lighter);
 	color: var(--el-text-color-placeholder);
-	font-size: 1.15rem;
+	font-size: 1.1rem;
+}
+
+.aliyun-card__meta {
+	display: flex;
+	align-items: center;
+	min-width: 0;
+	gap: 1.2rem;
+}
+
+.aliyun-card__group {
+	color: var(--el-text-color-secondary);
 }
 
 .aliyun-group-add {

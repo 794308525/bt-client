@@ -3,7 +3,7 @@ import type { Router } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
 const whiteList = ['/login', '/lock'] // 定义白名单  所有不受权限控制的页面
-const history = ['/home', '/setting', '/xterm', '/aliyun']
+const history = ['/home', '/setting', '/xterm', '/aliyun', '/toolbox']
 
 export default (router: Router) => {
 	router.beforeEach(async (to, _from, next) => {
@@ -31,7 +31,7 @@ export default (router: Router) => {
 			if (to.path === '/lock') {
 				next(userStore.routerHistory.value || '/home')
 			} else {
-				userStore.routerHistory.value = history.includes(to.path) ? to.path : '/home'
+				userStore.routerHistory.value = history.includes(to.path) || to.path.startsWith('/aliyun/') ? to.path : '/home'
 				next()
 			}
 		} else if (whiteList.includes(to.path)) {
