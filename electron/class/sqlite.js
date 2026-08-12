@@ -21,7 +21,7 @@ class Sqlite {
         this.JOIN = ''
         this.UNION = ''
         this.DISTINCT = ''
-        this.ENCRYPT_FIELDS = ['username','password','proxy_username','proxy_password','private_key','api_token','admin_path','server_id','access_key_id','access_key_secret']
+        this.ENCRYPT_FIELDS = ['username','password','proxy_username','proxy_password','private_key','api_token','admin_path','server_id','access_key_id','access_key_secret','secret_key']
         this.NOT_CLONE = false
 
 
@@ -59,6 +59,14 @@ class Sqlite {
                 this.checkField('panel_info', 'ov', 'INTEGER', '-1')
                 this.checkField('panel_info', 'server_id', 'TEXT', '""')
                 this.checkField('panel_info', 'current_disk', 'TEXT', '""')
+                this.checkField('aliyun_account', 'balance_currency', 'TEXT', '"CNY"')
+                this.checkField('aliyun_account', 'balance_refresh_time', 'INTEGER', '0')
+                this.checkField('aliyun_account', 'esa_count', 'INTEGER', '-1')
+                this.checkField('aliyun_account', 'cdn_count', 'INTEGER', '-1')
+                this.checkField('aliyun_account', 'cdn_status', 'TEXT', '"unknown"')
+                this.checkField('aliyun_account', 'resource_refresh_time', 'INTEGER', '0')
+                this.checkField('aliyun_account', 'resource_error', 'TEXT', '""')
+                this.checkField('aliyun_account', 'resource_error_detail', 'TEXT', '""')
                 this.create()
                 IS_CHECK_TABLE.status = true
             }
@@ -312,8 +320,16 @@ class Sqlite {
             \`access_key_id\` TEXT DEFAULT "",               -- AccessKey ID（加密）
             \`access_key_secret\` TEXT DEFAULT "",           -- AccessKey Secret（加密）
             \`balance\` TEXT DEFAULT "",                     -- 账号余额
+            \`balance_currency\` TEXT DEFAULT "CNY",          -- 余额币种
+            \`balance_refresh_time\` INTEGER DEFAULT 0,        -- 余额最后刷新时间
             \`server_count\` INTEGER DEFAULT -1,              -- 服务器数量，-1为待获取
             \`domain_count\` INTEGER DEFAULT -1,              -- 域名数量，-1为待获取
+            \`esa_count\` INTEGER DEFAULT -1,                 -- ESA 站点数量，-1为待获取
+            \`cdn_count\` INTEGER DEFAULT -1,                 -- CDN 域名数量，-1为待获取
+            \`cdn_status\` TEXT DEFAULT "unknown",            -- CDN 服务状态：active/not_opened/unknown
+            \`resource_refresh_time\` INTEGER DEFAULT 0,       -- 资源统计刷新时间
+            \`resource_error\` TEXT DEFAULT "",               -- 最近一次资源刷新错误
+            \`resource_error_detail\` TEXT DEFAULT "",        -- 最近一次资源刷新详细错误
             \`sort\` INTEGER DEFAULT 0,                       -- 默认排序值
             \`addtime\` INTEGER DEFAULT 0,                    -- 添加时间
             \`update_time\` INTEGER DEFAULT 0                 -- 更新时间
@@ -330,6 +346,48 @@ class Sqlite {
 
         if (this.DB_OBJ.prepare(sql).run()){
             console.log('创建[aliyun_group]表成功')
+        }
+
+        sql = `CREATE TABLE IF NOT EXISTS ssl_channel (
+            \`channel_id\` INTEGER PRIMARY KEY AUTOINCREMENT,  -- 证书渠道ID
+            \`provider\` TEXT DEFAULT "",                    -- 渠道类型
+            \`channel_name\` TEXT DEFAULT "",                -- 渠道显示名称
+            \`secret_key\` TEXT DEFAULT "",                  -- 访问密钥（加密）
+            \`enabled\` INTEGER DEFAULT 1,                   -- 是否启用
+            \`status\` TEXT DEFAULT "unknown",               -- 连接状态
+            \`last_check_time\` INTEGER DEFAULT 0,            -- 最后检测时间
+            \`last_error\` TEXT DEFAULT "",                  -- 最后错误
+            \`addtime\` INTEGER DEFAULT 0,
+            \`update_time\` INTEGER DEFAULT 0
+        )`
+
+        if (this.DB_OBJ.prepare(sql).run()){
+            console.log('创建[ssl_channel]表成功')
+        }
+
+        sql = `CREATE TABLE IF NOT EXISTS ssl_deploy_task (
+            \`task_id\` INTEGER PRIMARY KEY AUTOINCREMENT,  -- 自动部署任务ID
+            \`account_id\` INTEGER DEFAULT 0,              -- 阿里云账号ID
+            \`site_id\` TEXT DEFAULT "",                  -- ESA站点ID
+            \`site_name\` TEXT DEFAULT "",                -- ESA站点域名
+            \`channel_id\` INTEGER DEFAULT 0,              -- 证书渠道ID
+            \`provider\` TEXT DEFAULT "",                 -- 渠道类型
+            \`order_id\` TEXT DEFAULT "",                 -- 渠道订单号
+            \`domain\` TEXT DEFAULT "",                   -- 申请域名
+            \`brand\` TEXT DEFAULT "",                    -- CA品牌
+            \`status\` TEXT DEFAULT "creating",           -- 当前部署阶段
+            \`challenge_json\` TEXT DEFAULT "[]",         -- DNS验证记录（不含渠道密钥）
+            \`challenge_record_ids\` TEXT DEFAULT "[]",   -- ESA解析记录ID
+            \`esa_certificate_id\` TEXT DEFAULT "",       -- ESA证书ID
+            \`last_error\` TEXT DEFAULT "",               -- 最近错误
+            \`retry_count\` INTEGER DEFAULT 0,             -- 连续重试次数
+            \`next_check_time\` INTEGER DEFAULT 0,         -- 下次轮询时间
+            \`addtime\` INTEGER DEFAULT 0,
+            \`update_time\` INTEGER DEFAULT 0
+        )`
+
+        if (this.DB_OBJ.prepare(sql).run()){
+            console.log('创建[ssl_deploy_task]表成功')
         }
 
 

@@ -2,6 +2,20 @@
 
 const { Controller } = require('ee-core');
 const { pub } = require('../class/public.js');
+const { aliyunService, normalizeError } = require('../service/aliyun.js');
+
+function sendAliyunError(event, channel, error) {
+  const normalized = normalizeError(error);
+  return pub.send(event, channel, {
+    status: false,
+    msg: normalized.message,
+    data: {
+      errorCode: normalized.code,
+      requestId: normalized.requestId || '',
+      detail: normalized.detail || '',
+    },
+  });
+}
 
 class AliyunController extends Controller {
   constructor(ctx) {
@@ -19,7 +33,7 @@ class AliyunController extends Controller {
     ].concat(pub.M('aliyun_group').order('group_id ASC').select());
 
     const accounts = pub.M(this.TABLE)
-      .field('account_id, group_id, remark, access_key_id, balance, server_count, domain_count, sort, addtime, update_time')
+      .field('account_id, group_id, remark, access_key_id, balance, balance_currency, balance_refresh_time, server_count, domain_count, esa_count, cdn_count, cdn_status, sort, addtime, update_time, resource_refresh_time, resource_error, resource_error_detail')
       .order('sort DESC, account_id DESC')
       .select();
 
@@ -39,6 +53,16 @@ class AliyunController extends Controller {
       groups: resultGroups,
       data: accounts
     });
+  }
+
+  async find(args, event) {
+    try {
+      return pub.send_success(event, args.channel, aliyunService.safeAccount(
+        aliyunService.getAccount(args.data.account_id)
+      ));
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
   }
 
   /**
@@ -82,6 +106,7 @@ class AliyunController extends Controller {
       if (accessKeySecret) updateData.access_key_secret = accessKeySecret;
 
       const updated = pub.M(this.TABLE).where('account_id=?', accountId).update(updateData);
+      aliyunService.clearAccountCache(accountId);
       return updated
         ? pub.send_success_msg(event, channel, pub.lang('保存成功'))
         : pub.send_error_msg(event, channel, pub.lang('保存失败'));
@@ -94,8 +119,16 @@ class AliyunController extends Controller {
       access_key_id: accessKeyId,
       access_key_secret: accessKeySecret,
       balance: '',
+      balance_currency: 'CNY',
+      balance_refresh_time: 0,
       server_count: -1,
       domain_count: -1,
+      esa_count: -1,
+      cdn_count: -1,
+      cdn_status: 'unknown',
+      resource_refresh_time: 0,
+      resource_error: '',
+      resource_error_detail: '',
       sort: accountCount + 1,
       addtime: now,
       update_time: now
@@ -112,9 +145,293 @@ class AliyunController extends Controller {
       return pub.send_error_msg(event, args.channel, pub.lang('指定阿里云账号不存在'));
     }
     const removed = pub.M(this.TABLE).where('account_id=?', accountId).delete();
+    aliyunService.clearAccountCache(accountId);
     return removed
       ? pub.send_success_msg(event, args.channel, pub.lang('删除成功'))
       : pub.send_error_msg(event, args.channel, pub.lang('删除失败'));
+  }
+
+  async refresh_account_summary(args, event) {
+    try {
+      const data = await aliyunService.refreshSummary(args.data.account_id, args.data.force === true);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async refresh_balance(args, event) {
+    try {
+      const data = await aliyunService.refreshBalance(args.data.account_id);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async server_list(args, event) {
+    try {
+      const data = await aliyunService.listServers(args.data.account_id, args.data.force === true);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async domain_list(args, event) {
+    try {
+      const data = await aliyunService.listDomains(args.data.account_id, args.data);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async domain_info(args, event) {
+    try {
+      const data = await aliyunService.getDomainInfo(args.data.account_id, args.data.domain_name);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async esa_site_list(args, event) {
+    try {
+      const data = await aliyunService.listEsaSites(args.data.account_id, args.data);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async esa_site_detail(args, event) {
+    try {
+      const data = await aliyunService.getEsaSiteDetail(args.data.account_id, args.data.site_id);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async esa_record_list(args, event) {
+    try {
+      const data = await aliyunService.listEsaRecords(args.data.account_id, args.data);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async esa_record_add(args, event) {
+    try {
+      const data = await aliyunService.addEsaRecord(args.data.account_id, args.data);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async esa_record_update(args, event) {
+    try {
+      const data = await aliyunService.updateEsaRecord(args.data.account_id, args.data);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async esa_record_delete(args, event) {
+    try {
+      const data = await aliyunService.deleteEsaRecord(args.data.account_id, args.data.record_id);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async esa_record_set_proxy(args, event) {
+    try {
+      const data = await aliyunService.setEsaRecordProxy(args.data.account_id, args.data.record_id, args.data.proxied === true);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async esa_record_batch_action(args, event) {
+    try {
+      const data = await aliyunService.batchEsaRecordAction(args.data.account_id, args.data.record_ids, args.data.action);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async esa_origin_list(args, event) {
+    try {
+      const data = await aliyunService.listEsaOrigins(args.data.account_id, args.data.site_id);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async esa_certificate_list(args, event) {
+    try {
+      const data = await aliyunService.listEsaCertificates(args.data.account_id, args.data);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async cdn_domain_list(args, event) {
+    try {
+      const data = await aliyunService.listCdnDomains(args.data.account_id, args.data);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async cdn_domain_update(args, event) {
+    try {
+      const data = await aliyunService.updateCdnDomain(args.data.account_id, args.data);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async cdn_domain_delete(args, event) {
+    try {
+      const data = await aliyunService.deleteCdnDomain(args.data.account_id, args.data.domain_name);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async cdn_domain_batch_action(args, event) {
+    try {
+      const data = await aliyunService.batchCdnDomainAction(args.data.account_id, args.data.domain_names, args.data.action);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async cdn_operation_logs(args, event) {
+    try {
+      const data = await aliyunService.listCdnOperationLogs(args.data.account_id, args.data);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async record_list(args, event) {
+    try {
+      const data = await aliyunService.listRecords(args.data.account_id, args.data);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async record_lines(args, event) {
+    try {
+      const data = await aliyunService.listRecordLines(args.data.account_id, args.data.domain_name);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async record_logs(args, event) {
+    try {
+      const data = await aliyunService.listRecordLogs(args.data.account_id, args.data);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async record_add(args, event) {
+    try {
+      const data = await aliyunService.addRecord(args.data.account_id, args.data);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async record_update(args, event) {
+    try {
+      const data = await aliyunService.updateRecord(args.data.account_id, args.data);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async record_delete(args, event) {
+    try {
+      const data = await aliyunService.deleteRecord(args.data.account_id, args.data.record_id);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async record_set_status(args, event) {
+    try {
+      const data = await aliyunService.setRecordStatus(
+        args.data.account_id,
+        args.data.record_id,
+        args.data.status
+      );
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async record_batch_action(args, event) {
+    try {
+      const data = await aliyunService.batchRecordAction(args.data.account_id, args.data.record_ids, args.data.action);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async open_terminal(args, event) {
+    try {
+      const data = await aliyunService.prepareEcsTerminal(
+        args.data.account_id,
+        args.data.instance_id,
+        args.data.region_id,
+        args.data.title
+      );
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async open_swas_workbench(args, event) {
+    try {
+      const data = await aliyunService.openSwasWorkbench(
+        args.data.account_id,
+        args.data.instance_id,
+        args.data.region_id
+      );
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
   }
 
   async add_group(args, event) {

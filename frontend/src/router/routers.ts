@@ -25,6 +25,14 @@ export const routeList: Array<RouteRecordRaw> = [
 				component: () => import('@views/aliyun/index.vue'),
 			},
 			{
+				path: '/aliyun/:accountId',
+				component: () => import('@views/aliyun/detail.vue'),
+			},
+			{
+				path: '/toolbox',
+				component: () => import('@views/toolbox/index.vue'),
+			},
+			{
 				path: '/setting',
 				component: () => import('@views/setting/index.vue'),
 			},

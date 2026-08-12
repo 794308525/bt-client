@@ -601,6 +601,161 @@ const routes = {
 			method: 'ipc',
 			path: 'controller.aliyun.list',
 		},
+		find: {
+			title: '获取阿里云账号详情',
+			method: 'ipc',
+			path: 'controller.aliyun.find',
+		},
+		refresh_account_summary: {
+			title: '刷新阿里云账号资源统计',
+			method: 'ipc',
+			path: 'controller.aliyun.refresh_account_summary',
+		},
+		refresh_balance: {
+			title: '刷新阿里云账号余额',
+			method: 'ipc',
+			path: 'controller.aliyun.refresh_balance',
+		},
+		server_list: {
+			title: '获取阿里云服务器列表',
+			method: 'ipc',
+			path: 'controller.aliyun.server_list',
+		},
+		domain_list: {
+			title: '获取阿里云域名列表',
+			method: 'ipc',
+			path: 'controller.aliyun.domain_list',
+		},
+		domain_info: {
+			title: '获取阿里云域名详情',
+			method: 'ipc',
+			path: 'controller.aliyun.domain_info',
+		},
+		esa_site_list: {
+			title: '获取阿里云 ESA 站点列表',
+			method: 'ipc',
+			path: 'controller.aliyun.esa_site_list',
+		},
+		esa_site_detail: {
+			title: '获取阿里云 ESA 站点详情',
+			method: 'ipc',
+			path: 'controller.aliyun.esa_site_detail',
+		},
+		esa_record_list: {
+			title: '获取阿里云 ESA 解析记录',
+			method: 'ipc',
+			path: 'controller.aliyun.esa_record_list',
+		},
+		esa_record_add: {
+			title: '新增阿里云 ESA 解析记录',
+			method: 'ipc',
+			path: 'controller.aliyun.esa_record_add',
+		},
+		esa_record_update: {
+			title: '修改阿里云 ESA 解析记录',
+			method: 'ipc',
+			path: 'controller.aliyun.esa_record_update',
+		},
+		esa_record_delete: {
+			title: '删除阿里云 ESA 解析记录',
+			method: 'ipc',
+			path: 'controller.aliyun.esa_record_delete',
+		},
+		esa_record_set_proxy: {
+			title: '切换阿里云 ESA 解析代理',
+			method: 'ipc',
+			path: 'controller.aliyun.esa_record_set_proxy',
+		},
+		esa_record_batch_action: {
+			title: '批量操作阿里云 ESA 解析记录',
+			method: 'ipc',
+			path: 'controller.aliyun.esa_record_batch_action',
+		},
+		esa_origin_list: {
+			title: '获取阿里云 ESA 源站信息',
+			method: 'ipc',
+			path: 'controller.aliyun.esa_origin_list',
+		},
+		esa_certificate_list: {
+			title: '获取阿里云 ESA HTTPS 证书',
+			method: 'ipc',
+			path: 'controller.aliyun.esa_certificate_list',
+		},
+		cdn_domain_list: {
+			title: '获取阿里云 CDN 域名列表',
+			method: 'ipc',
+			path: 'controller.aliyun.cdn_domain_list',
+		},
+		cdn_domain_update: {
+			title: '修改阿里云 CDN 域名源站',
+			method: 'ipc',
+			path: 'controller.aliyun.cdn_domain_update',
+		},
+		cdn_domain_delete: {
+			title: '删除阿里云 CDN 域名',
+			method: 'ipc',
+			path: 'controller.aliyun.cdn_domain_delete',
+		},
+		cdn_domain_batch_action: {
+			title: '批量操作阿里云 CDN 域名',
+			method: 'ipc',
+			path: 'controller.aliyun.cdn_domain_batch_action',
+		},
+		cdn_operation_logs: {
+			title: '获取阿里云 CDN 操作记录',
+			method: 'ipc',
+			path: 'controller.aliyun.cdn_operation_logs',
+		},
+		record_list: {
+			title: '获取阿里云解析记录列表',
+			method: 'ipc',
+			path: 'controller.aliyun.record_list',
+		},
+		record_lines: {
+			title: '获取阿里云解析线路',
+			method: 'ipc',
+			path: 'controller.aliyun.record_lines',
+		},
+		record_logs: {
+			title: '获取阿里云解析操作记录',
+			method: 'ipc',
+			path: 'controller.aliyun.record_logs',
+		},
+		record_add: {
+			title: '新增阿里云解析记录',
+			method: 'ipc',
+			path: 'controller.aliyun.record_add',
+		},
+		record_update: {
+			title: '修改阿里云解析记录',
+			method: 'ipc',
+			path: 'controller.aliyun.record_update',
+		},
+		record_delete: {
+			title: '删除阿里云解析记录',
+			method: 'ipc',
+			path: 'controller.aliyun.record_delete',
+		},
+		record_set_status: {
+			title: '启用或暂停阿里云解析记录',
+			method: 'ipc',
+			path: 'controller.aliyun.record_set_status',
+		},
+		record_batch_action: {
+			title: '批量操作阿里云解析记录',
+			method: 'ipc',
+			path: 'controller.aliyun.record_batch_action',
+		},
+		open_terminal: {
+			title: '准备阿里云 ECS 会话终端',
+			method: 'ipc',
+			path: 'controller.aliyun.open_terminal',
+		},
+		open_swas_workbench: {
+			title: '打开轻量服务器 Workbench',
+			method: 'ipc',
+			path: 'controller.aliyun.open_swas_workbench',
+		},
 		save: {
 			title: '新增或修改阿里云账号',
 			method: 'ipc',
@@ -626,6 +781,26 @@ const routes = {
 			method: 'ipc',
 			path: 'controller.aliyun.remove_group',
 		},
+	},
+	ssl: {
+		providers: { title: '获取证书渠道类型', method: 'ipc', path: 'controller.ssl.providers' },
+		channel_list: { title: '获取证书渠道', method: 'ipc', path: 'controller.ssl.channel_list' },
+		channel_save: { title: '保存证书渠道', method: 'ipc', path: 'controller.ssl.channel_save' },
+		channel_remove: { title: '删除证书渠道', method: 'ipc', path: 'controller.ssl.channel_remove' },
+		channel_test: { title: '测试证书渠道', method: 'ipc', path: 'controller.ssl.channel_test' },
+		meta: { title: '获取证书申请选项', method: 'ipc', path: 'controller.ssl.meta' },
+		certificate_list: { title: '获取证书列表', method: 'ipc', path: 'controller.ssl.certificate_list' },
+		certificate_create: { title: '申请证书', method: 'ipc', path: 'controller.ssl.certificate_create' },
+		certificate_detail: { title: '获取证书详情', method: 'ipc', path: 'controller.ssl.certificate_detail' },
+		certificate_challenge: { title: '获取证书验证值', method: 'ipc', path: 'controller.ssl.certificate_challenge' },
+		certificate_verify: { title: '验证证书订单', method: 'ipc', path: 'controller.ssl.certificate_verify' },
+		certificate_content: { title: '获取证书内容', method: 'ipc', path: 'controller.ssl.certificate_content' },
+		certificate_download: { title: '下载证书包', method: 'ipc', path: 'controller.ssl.certificate_download' },
+		certificate_cancel: { title: '取消证书申请', method: 'ipc', path: 'controller.ssl.certificate_cancel' },
+		certificate_delete: { title: '删除证书', method: 'ipc', path: 'controller.ssl.certificate_delete' },
+		esa_apply_create: { title: '申请并自动部署 ESA 证书', method: 'ipc', path: 'controller.ssl.esa_apply_create' },
+		esa_apply_list: { title: '获取 ESA 证书自动部署任务', method: 'ipc', path: 'controller.ssl.esa_apply_list' },
+		esa_apply_retry: { title: '重试 ESA 证书自动部署任务', method: 'ipc', path: 'controller.ssl.esa_apply_retry' },
 	},
 	term: {
 		list: {
