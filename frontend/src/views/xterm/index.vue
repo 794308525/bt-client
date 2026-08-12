@@ -76,6 +76,7 @@ import ContextMenu from '@imengyu/vue3-context-menu'
 import type { hostProps } from '@types/xterm'
 import { storeToRefs } from 'pinia'
 import { useSettingStore } from '@store/setting'
+import { useXtermBase } from '@store/xterm'
 import LeftMenu from './Views/LeftMenu/index.vue'
 import RightMenu from './Views/RightMenu/index.vue'
 import addHostDialog from './components/AddHost/index.vue'
@@ -84,7 +85,7 @@ import MyTerminal from './Views/Terminal/index.vue'
 import { ipc, common, routes } from '@api/http'
 import { createContext } from './hooks'
 import White from '@/assets/images/logo-white.svg'
-import {xterm_disconnect,delete_connect} from '@views/xterm/controller'
+import { delete_connect } from '@views/xterm/controller'
 
 import { pub } from '@utils/tools'
 
@@ -114,6 +115,7 @@ defineOptions({
 
 const useStore = useSettingStore()
 const { mainHeight } = storeToRefs(useStore)
+const xtermStore = useXtermBase()
 const leftMenuView = ref()
 const hostActive = ref(0) // 当前激活的服务器
 const terminalList = ref<terminalInfoProps[]>([]) // 终端列表
@@ -253,7 +255,7 @@ const setRefTerminal = (el: tremRef, ssh_id: string) => {
  * @returns {void}
  */
 const createTerminal = (hostInfo: hostProps): void => {
-	const ssh_id = 'ssh_id_' + new Date().getTime() // 随机id
+	const ssh_id = 'ssh_id_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8) // 每次连接使用独立ID
 	if (hostInfo.os_type === 'Windows') {
 		ipc.send(routes.term.connect.path, {
 			channel: ssh_id,
@@ -277,6 +279,12 @@ const createTerminal = (hostInfo: hostProps): void => {
 		}
 	})
 }
+
+const consumePendingLaunch = () => {
+	const launch = xtermStore.consumeLaunch()
+	if (launch) createTerminal(launch as hostProps)
+}
+
 // 更新状态状态
 const refreshXtermStatus = (status: 'success' | 'warning' | 'danger') => {
 	terminalList.value[hostActive.value].status = status
@@ -322,6 +330,9 @@ const delete_connect_view = (mode:string,index: number) => {
 			break
 	}
 }
+
+onMounted(() => nextTick(consumePendingLaunch))
+onActivated(consumePendingLaunch)
 
 </script>
 

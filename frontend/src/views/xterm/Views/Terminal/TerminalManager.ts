@@ -16,6 +16,7 @@ export class TerminalManager {
 	private channel: string
 	private hostInfo: object
 	private trzsz: TrzszFilter
+	private transport: string = 'ssh'
 	private copy: string = ''
 	private isConnected: boolean = false
 	private _status: string = 'success'
@@ -47,6 +48,7 @@ export class TerminalManager {
 
 		this.channel = this.channelRef
 		this.hostInfo = this.data
+		this.transport = (this.hostInfo as any).transport || 'ssh'
 		this.terminal.loadAddon(this.fitAddon)
 		this.terminal.loadAddon(new CanvasAddon())
 		this.terminal.loadAddon(new WebglAddon())
@@ -140,22 +142,28 @@ export class TerminalManager {
 		this.terminal.open(this.terminalDom)
 		this.resizeTerminal()
 		ipc.on(this.channel, (event: any, arg: any) => {
-			// 判断退出
-			if (Object.prototype.toString.call(arg) && arg.status) {
+			const isObject = arg !== null && typeof arg === 'object'
+			const text = typeof arg === 'string' ? arg : ''
+			const message = isObject && arg.data && typeof arg.data.msg === 'string'
+				? arg.data.msg
+				: isObject && typeof arg.msg === 'string' ? arg.msg : ''
+			// 判断成功应答，避免把错误对象当作终端输出处理
+			if (isObject && arg.status) {
 				return
 			}
 			if (
-				(Object.prototype.toString.call(arg) && arg.data && arg.data.hasOwnProperty('msg')) ||
-				arg.indexOf('SSH连接已关闭') > -1 ||
-				arg.indexOf('连接失败') > -1 ||
-				arg.indexOf('Not connected') > -1 ||
-				arg.indexOf('No response') > -1 ||
-				arg.indexOf('连接超时') > -1 ||
-				arg.indexOf('认证失败') > -1
+				!!message ||
+				text.includes('SSH连接已关闭') ||
+				text.includes('连接失败') ||
+				text.includes('Not connected') ||
+				text.includes('No response') ||
+				text.includes('连接超时') ||
+				text.includes('认证失败') ||
+				text.includes('阿里云会话已关闭')
 			) {
 				this._status = 'danger'
 				this.isConnected = false
-			} else if (arg.indexOf('正在重新连接') > -1) {
+			} else if (text.includes('正在重新连接')) {
 				this._status = 'warning'
 			}
 
@@ -177,7 +185,10 @@ export class TerminalManager {
 				}, 500)
 			}
 
-			this.trzsz.processServerOutput(arg)
+			if (isObject) {
+				if (message) this.terminal.write(`\r\n${message}\r\n`)
+			} else if (this.transport === 'ssh') this.trzsz.processServerOutput(arg)
+			else this.terminal.write(arg)
 			// this.terminal.write(arg)
 			this.callback &&
 				this.callback({
@@ -255,7 +266,8 @@ export class TerminalManager {
 			}
 
 			// 转发到trzsz
-			this.trzsz.processTerminalInput(data)
+			if (this.transport === 'ssh') this.trzsz.processTerminalInput(data)
+			else this.send_to_server(data)
 		})
 
 		// 选择文本时将文本复制到剪贴板中间属性，用于Ctrl+C复制
@@ -269,7 +281,7 @@ export class TerminalManager {
 
 		// 二进制数据
 		this.terminal.onBinary(data => {
-			this.trzsz.processBinaryInput(data)
+			if (this.transport === 'ssh') this.trzsz.processBinaryInput(data)
 		})
 	}
 	/**
@@ -292,11 +304,12 @@ export class TerminalManager {
 		setTimeout(function () {
 			self.fitTerminal()
 			// 写入终端的列数到trzsz
-			self.trzsz.setTerminalColumns(self.terminal.cols)
+			if (self.transport === 'ssh') self.trzsz.setTerminalColumns(self.terminal.cols)
 		}, timeout)
 	}
 
 	public dispose() {
+		ipc.removeAllListeners(this.channel)
 		this.terminal.clear()
 		this.terminal.dispose()
 		this.isConnected = false

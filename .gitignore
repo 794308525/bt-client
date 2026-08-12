@@ -3,6 +3,7 @@
 /logs/
 /node_modules/
 /out/
+/build/extraResources/aliyun-cli/
 /package-lock.json
 /public/dist/
 /public/electron/

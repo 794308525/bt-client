@@ -8,7 +8,7 @@
 			@dragleave.prevent="handleDragLeave"
 			@drop.prevent="handleDragDrop"
 			:style="{ height: mainHeight - 57 + 'px' }"></div>
-		<CommandUpload v-if="commadUpload.visible"/>
+		<CommandUpload v-if="commadUpload.visible && props.hostInfo.transport !== 'aliyun-session'"/>
 		<div class="flex items-center bg-[#1F1F1F] px-2 py-[.2rem] xterm-send-box z-2 relative">
 			<bt-icon name="xtremSend" size="14" />
 			<input
@@ -104,6 +104,7 @@ const handleDragLeave = (event: DragEvent) => {
 }
 // 拖拽结束
 const handleDragDrop = async (event: DragEvent, rData?: any) => {
+	if (props.hostInfo.transport === 'aliyun-session') return
 	const files = rData ? rData : event.dataTransfer?.files
 	// if(commadUpload.value.progress != 0 && !commadUpload.value.status) {
 	// 	Message.error('正在上传中，请勿重复操作')

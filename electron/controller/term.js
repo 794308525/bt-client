@@ -10,6 +10,8 @@ const Electron = require('ee-core/electron');
 const Services = require('ee-core/services');
 const Mstsc = require('../class/mstsc.js');
 const os = require("os")
+const { aliyunService, normalizeError } = require('../service/aliyun.js');
+const { AliyunCliSession } = require('../service/aliyun-cli.js');
 
 const TermItems = {};
 global.active_ssh_id = 0;
@@ -957,6 +959,33 @@ class TermController extends Controller {
 	 */
 	async connect(args, event) {
 		let channel = args.channel;
+		if (args.data && args.data.transport === 'aliyun-session') {
+			try {
+				const sessionData = args.data;
+				if (TermItems[channel]) {
+					TermItems[channel].disconnect ? TermItems[channel].disconnect() : TermItems[channel].cleanup();
+					delete TermItems[channel];
+				}
+				const account = aliyunService.getAccount(sessionData.account_id);
+				await aliyunService.preflightEcsTerminal(sessionData.account_id, sessionData.instance_id, sessionData.region_id);
+				TermItems[channel] = new AliyunCliSession({ channel, event }).start({
+					accessKeyId: account.access_key_id,
+					accessKeySecret: account.access_key_secret,
+					regionId: sessionData.region_id,
+					instanceId: sessionData.instance_id,
+					cols: sessionData.cols,
+					rows: sessionData.rows,
+				});
+			} catch (error) {
+				const normalized = normalizeError(error);
+				return pub.send(event, channel, {
+					status: false,
+					msg: normalized.message,
+					data: { errorCode: normalized.code, requestId: normalized.requestId || '' },
+				});
+			}
+			return;
+		}
 		if (args.data.ssh_id) {
 			let data = pub.M('ssh_info').where('ssh_id=?', args.data.ssh_id).find();
 
@@ -1078,7 +1107,7 @@ class TermController extends Controller {
 	 */
 	async write(args, event) {
 		let channel = args.channel;
-		TermItems[channel].write(args.data);
+		if (TermItems[channel]) TermItems[channel].write(args.data);
 	}
 
 	/**
@@ -1091,13 +1120,15 @@ class TermController extends Controller {
 	 */
 	async disconnect(args, event) {
 		let channel = args.channel;
+		if (!TermItems[channel]) return pub.send_success_msg(event, channel, pub.lang('终端已关闭'));
 		if(TermItems[channel].ssh_id){
 			if(global.SftpItems[TermItems[channel].ssh_id]){
 				global.SftpItems[TermItems[channel].ssh_id].disconnect();
 				delete global.SftpItems[TermItems[channel].ssh_id];
 			}
 		}
-		TermItems[channel].disconnect();
+		if (typeof TermItems[channel].disconnect === 'function') TermItems[channel].disconnect();
+		else if (typeof TermItems[channel].cleanup === 'function') TermItems[channel].cleanup();
 		delete TermItems[channel];
 		// Log.info('disconnect:', channel);
 		return pub.send_success_msg(event, channel, pub.lang('断开终端成功'));
@@ -1117,6 +1148,10 @@ class TermController extends Controller {
 	 */
 	async resize(args, event) {
 		let channel = args.channel;
+		if (TermItems[channel] && typeof TermItems[channel].resize === 'function') {
+			TermItems[channel].resize(args.data.cols, args.data.rows);
+			return;
+		}
 		if (TermItems[channel] && TermItems[channel].stream) {
 			let rows = args.data.rows;
 			let cols = args.data.cols;
@@ -1148,22 +1183,22 @@ class TermController extends Controller {
 		let channel = args.channel;
 		if (args.data.mode == 'all') {
 			for (let key in TermItems) {
-				if (global.SftpItems[TermItems[key].ssh_id]) {
+				if (TermItems[key] && global.SftpItems[TermItems[key].ssh_id]) {
 					global.SftpItems[TermItems[key].ssh_id].disconnect();
 					delete global.SftpItems[TermItems[key].ssh_id];
 				}
-				TermItems[key].disconnect();
+				if (TermItems[key]) TermItems[key].disconnect ? TermItems[key].disconnect() : TermItems[key].cleanup();
 				delete TermItems[key];
 			}
 		}
 		if (args.data.mode == 'other') {
 			for (let key in TermItems) {
 				if (key != args.data.ssh_id) {
-					if (global.SftpItems[TermItems[key].ssh_id]) {
+					if (TermItems[key] && global.SftpItems[TermItems[key].ssh_id]) {
 						global.SftpItems[TermItems[key].ssh_id].disconnect();
 						delete global.SftpItems[TermItems[key].ssh_id];
 					}
-					TermItems[key].disconnect();
+					if (TermItems[key]) TermItems[key].disconnect ? TermItems[key].disconnect() : TermItems[key].cleanup();
 					delete TermItems[key];
 				}
 			}
@@ -1171,11 +1206,11 @@ class TermController extends Controller {
 		if (args.data.mode == 'self') {
 			for (let key in TermItems) {
 				if (key === args.data.ssh_id) {
-					if (global.SftpItems[TermItems[key].ssh_id]) {
+					if (TermItems[key] && global.SftpItems[TermItems[key].ssh_id]) {
 						global.SftpItems[TermItems[key].ssh_id].disconnect();
 						delete global.SftpItems[TermItems[key].ssh_id];
 					}
-					TermItems[key].disconnect();
+					if (TermItems[key]) TermItems[key].disconnect ? TermItems[key].disconnect() : TermItems[key].cleanup();
 					delete TermItems[key];
 				}
 			}
