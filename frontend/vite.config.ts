@@ -7,12 +7,35 @@ import { createSvgIconsPlugin } from 'vite-plugin-svg-icons';
 import vueJsx from '@vitejs/plugin-vue-jsx';
 import UnoCSS from 'unocss/vite';
 
+import fs from 'fs';
 import path from 'path';
 // https://vitejs.dev/config/
 export default defineConfig(({ command, mode }) => {
 	return {
 		// 项目插件
 		plugins: [
+			{
+				name: 'serve-node-module-source-maps',
+				configureServer(server) {
+					const nodeModulesRoot = path.resolve(__dirname, '../node_modules');
+					server.middlewares.use((req, res, next) => {
+						let pathname = '';
+						try {
+							pathname = decodeURIComponent(String(req.url || '').split('?')[0]);
+						} catch (_error) {
+							return next();
+						}
+						const marker = '/node_modules/';
+						const markerIndex = pathname.indexOf(marker);
+						if (markerIndex < 0 || !pathname.endsWith('.js.map')) return next();
+						const sourceMapPath = path.resolve(nodeModulesRoot, pathname.slice(markerIndex + marker.length));
+						if (!sourceMapPath.startsWith(`${nodeModulesRoot}${path.sep}`) || !fs.existsSync(sourceMapPath) || !fs.statSync(sourceMapPath).isFile()) return next();
+						res.statusCode = 200;
+						res.setHeader('Content-Type', 'application/json; charset=utf-8');
+						fs.createReadStream(sourceMapPath).pipe(res);
+					});
+				},
+			},
 			vue(),
 			vueJsx(),
 			UnoCSS(),
