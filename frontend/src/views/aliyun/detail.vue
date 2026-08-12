@@ -474,6 +474,31 @@
 				</div>
 				<div class="pagination"><el-pagination v-model:current-page="cdnPage" :page-size="50" layout="total, prev, pager, next" :total="cdnTotal" @current-change="loadCdnDomains" /></div>
 			</el-tab-pane>
+
+			<el-tab-pane name="oss" class="oss-pane">
+				<div class="resource-toolbar">
+					<div class="resource-toolbar__filters">
+						<el-input v-model="ossKeyword" clearable :prefix-icon="Search" :placeholder="pub.lang('搜索 Bucket 或地域')" @keydown.enter="loadOssBuckets(1)" />
+						<el-button :icon="Search" @click="loadOssBuckets(1)">{{ pub.lang('查询') }}</el-button>
+					</div>
+					<div class="resource-toolbar__actions">
+						<el-button :icon="Refresh" :loading="ossLoading" @click="loadOssBuckets(ossPage)" />
+						<el-button type="primary" :icon="Plus" @click="openOssBucketDialog">{{ pub.lang('创建 Bucket') }}</el-button>
+					</div>
+				</div>
+				<div class="oss-table-wrap">
+					<el-table :data="ossBuckets" v-loading="ossLoading" row-key="name" height="100%">
+						<el-table-column :label="pub.lang('Bucket')" min-width="190"><template #default="{ row }"><div class="instance-name">{{ row.name }}</div><div class="muted mono">{{ row.endpoint }}</div></template></el-table-column>
+						<el-table-column prop="region" :label="pub.lang('地域')" width="170" />
+						<el-table-column :label="pub.lang('文件数量')" width="110" align="right"><template #default="{ row }"><el-tooltip v-if="row.stat_error" :content="row.stat_error" placement="top"><span class="muted">--</span></el-tooltip><span v-else>{{ row.object_count.toLocaleString() }}</span></template></el-table-column>
+						<el-table-column :label="pub.lang('占用空间')" width="120" align="right"><template #default="{ row }"><el-tooltip v-if="row.stat_error" :content="row.stat_error" placement="top"><span class="muted">--</span></el-tooltip><span v-else>{{ formatBytes(row.storage_size) }}</span></template></el-table-column>
+						<el-table-column :label="pub.lang('存储类型')" width="110"><template #default="{ row }">{{ ossStorageClassName(row.storage_class) }}</template></el-table-column>
+						<el-table-column :label="pub.lang('创建时间')" width="180"><template #default="{ row }">{{ safeFormatDate(row.creation_time) }}</template></el-table-column>
+						<el-table-column :label="pub.lang('操作')" width="130" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openOssObjects(row)">{{ pub.lang('对象管理') }}</el-button><el-button link type="danger" @click="removeOssBucket(row)">{{ pub.lang('删除') }}</el-button></template></el-table-column>
+					</el-table>
+				</div>
+				<div class="pagination"><el-pagination v-model:current-page="ossPage" :page-size="20" layout="total, prev, pager, next" :total="ossTotal" @current-change="loadOssBuckets" /></div>
+			</el-tab-pane>
 		</el-tabs>
 
 		<el-dialog v-model="recordDialogVisible" width="520" align-center :title="recordForm.record_id ? pub.lang('编辑解析记录') : pub.lang('新增解析记录')" :close-on-click-modal="false" @closed="resetRecordForm">
@@ -481,6 +506,7 @@
 				<el-form-item :label="pub.lang('域名')"><el-input :model-value="selectedDomain?.domain_name" disabled /></el-form-item>
 				<el-form-item label="RR" prop="rr"><el-input v-model="recordForm.rr" placeholder="@ / www" @input="removeRecordRrSpaces" /></el-form-item>
 				<el-form-item :label="pub.lang('类型')" prop="type"><el-select v-model="recordForm.type" class="w-full"><el-option v-for="type in recordTypes" :key="type" :label="type" :value="type" /></el-select></el-form-item>
+				<el-form-item v-if="!recordForm.record_id" :label="pub.lang('记录目标')"><el-select v-model="recordOssBucket" clearable filterable class="w-full" :loading="ossCandidateLoading" :placeholder="pub.lang('手动填写或选择 OSS Bucket')" @change="selectRecordOssBucket"><el-option v-for="bucket in ossCandidates" :key="bucket.name" :label="`${bucket.name} · ${bucket.region}`" :value="bucket.name" /></el-select></el-form-item>
 				<el-form-item :label="pub.lang('记录值')" prop="value"><el-input v-model="recordForm.value" @input="removeRecordValueSpaces" /></el-form-item>
 				<el-form-item label="TTL" prop="ttl"><el-input-number v-model="recordForm.ttl" :min="1" :max="86400" class="w-full" /></el-form-item>
 				<el-form-item :label="pub.lang('线路')" prop="line"><el-select v-model="recordForm.line" filterable class="w-full"><el-option v-for="line in recordLines" :key="line.code" :label="line.name" :value="line.code" /></el-select></el-form-item>
@@ -509,7 +535,8 @@
 					<el-form-item label="Flag" prop="flag"><el-input-number v-model="esaRecordForm.flag" :min="0" :max="255" class="w-full" /></el-form-item>
 					<el-form-item label="Tag" prop="tag"><el-select v-model="esaRecordForm.tag" class="w-full"><el-option label="issue" value="issue" /><el-option label="issuewild" value="issuewild" /><el-option label="iodef" value="iodef" /></el-select></el-form-item>
 				</template>
-				<el-form-item v-if="esaRecordForm.type === 'CNAME'" :label="pub.lang('源站类型')"><el-select v-model="esaRecordForm.source_type" class="w-full"><el-option :label="pub.lang('普通域名')" value="Domain" /><el-option label="OSS" value="OSS" /><el-option label="S3" value="S3" /><el-option label="LB" value="LB" /><el-option label="OP" value="OP" /></el-select></el-form-item>
+				<el-form-item v-if="esaRecordForm.type === 'CNAME'" :label="pub.lang('源站类型')"><el-select v-model="esaRecordForm.source_type" class="w-full" @change="handleEsaSourceTypeChange"><el-option :label="pub.lang('普通域名')" value="Domain" /><el-option label="OSS" value="OSS" /><el-option label="S3" value="S3" /><el-option label="LB" value="LB" /><el-option label="OP" value="OP" /></el-select></el-form-item>
+				<el-form-item v-if="esaRecordForm.type === 'CNAME' && esaRecordForm.source_type === 'OSS'" label="OSS Bucket"><el-select v-model="esaOssBucket" filterable class="w-full" :loading="ossCandidateLoading" @change="selectEsaOssBucket"><el-option v-for="bucket in ossCandidates" :key="bucket.name" :label="`${bucket.name} · ${bucket.region}`" :value="bucket.name" /></el-select></el-form-item>
 				<el-form-item v-if="esaRecordProxySupported" :label="pub.lang('代理加速')"><el-switch v-model="esaRecordForm.proxied" active-color="#ff6a00" /></el-form-item>
 				<el-form-item v-if="esaRecordForm.proxied" :label="pub.lang('业务场景')"><el-select v-model="esaRecordForm.biz_name" class="w-full"><el-option :label="pub.lang('网页')" value="web" /><el-option label="API" value="api" /><el-option :label="pub.lang('图片视频')" value="image_video" /></el-select></el-form-item>
 				<el-form-item :label="pub.lang('备注')"><el-input v-model="esaRecordForm.comment" maxlength="100" show-word-limit /></el-form-item>
@@ -573,8 +600,9 @@
 				<el-form-item :label="pub.lang('源站')" prop="sources">
 					<div class="cdn-source-list">
 						<div v-for="(source, index) in cdnDomainForm.sources" :key="index" class="cdn-source-row">
-							<el-select v-model="source.type"><el-option :label="pub.lang('IP 地址')" value="ipaddr" /><el-option :label="pub.lang('域名')" value="domain" /><el-option label="OSS" value="oss" /></el-select>
-							<el-input v-model="source.content" :placeholder="pub.lang('源站地址')" />
+							<el-select v-model="source.type" @change="handleCdnSourceTypeChange(source)"><el-option :label="pub.lang('IP 地址')" value="ipaddr" /><el-option :label="pub.lang('域名')" value="domain" /><el-option label="OSS" value="oss" /></el-select>
+						<el-select v-if="source.type === 'oss'" v-model="source.content" filterable :loading="ossCandidateLoading" :placeholder="pub.lang('选择 OSS Bucket')"><el-option v-for="bucket in ossCandidates" :key="bucket.name" :label="`${bucket.name} · ${bucket.region}`" :value="bucket.endpoint" /></el-select>
+						<el-input v-else v-model="source.content" :placeholder="pub.lang('源站地址')" />
 							<el-input-number v-model="source.port" :min="1" :max="65535" controls-position="right" />
 							<el-button type="danger" link :disabled="cdnDomainForm.sources.length === 1" @click="removeCdnSource(index)">{{ pub.lang('删除') }}</el-button>
 						</div>
@@ -586,6 +614,16 @@
 				<el-button @click="cdnDomainDialogVisible = false">{{ pub.lang('取消') }}</el-button>
 				<el-button type="primary" :loading="cdnDomainSaving" @click="saveCdnDomain">{{ pub.lang('保存') }}</el-button>
 			</template>
+		</el-dialog>
+
+		<el-dialog v-model="ossBucketDialogVisible" width="520" align-center :title="pub.lang('创建 OSS Bucket')" :close-on-click-modal="false">
+			<el-form ref="ossBucketFormRef" :model="ossBucketForm" :rules="ossBucketRules" label-width="95px">
+				<el-form-item label="Bucket" prop="name"><el-input v-model="ossBucketForm.name" maxlength="63" placeholder="example-bucket" /></el-form-item>
+				<el-form-item :label="pub.lang('地域')" prop="region"><el-select v-model="ossBucketForm.region" filterable allow-create class="w-full"><el-option v-for="region in ossRegions" :key="region" :label="region" :value="region" /></el-select></el-form-item>
+				<el-form-item :label="pub.lang('存储类型')"><el-select v-model="ossBucketForm.storage_class" class="w-full"><el-option :label="pub.lang('标准存储')" value="Standard" /><el-option :label="pub.lang('低频访问')" value="IA" /><el-option :label="pub.lang('归档存储')" value="Archive" /></el-select></el-form-item>
+				<el-form-item :label="pub.lang('读写权限')"><el-select v-model="ossBucketForm.acl" class="w-full"><el-option :label="pub.lang('私有')" value="private" /><el-option :label="pub.lang('公共读')" value="public-read" /><el-option :label="pub.lang('公共读写')" value="public-read-write" /></el-select></el-form-item>
+			</el-form>
+			<template #footer><el-button @click="ossBucketDialogVisible = false">{{ pub.lang('取消') }}</el-button><el-button type="primary" :loading="ossBucketSaving" @click="saveOssBucket">{{ pub.lang('创建') }}</el-button></template>
 		</el-dialog>
 
 		<el-drawer v-model="cdnLogVisible" size="1000px" :title="pub.lang('CDN 操作记录')">
@@ -655,6 +693,7 @@ interface AliyunAccount {
 	esa_count: number
 	cdn_count: number
 	cdn_status: 'active' | 'not_opened' | 'unknown'
+	oss_count: number
 	resource_refresh_time: number
 	resource_error: string
 	resource_error_detail: string
@@ -701,6 +740,7 @@ interface EsaDeployTask { task_id: number; account_id: number; site_id: string; 
 interface CdnSource { type: string; content: string; port: number; priority: number; weight: number }
 interface CdnDomain { domain_id: string; domain_name: string; cname: string; cdn_type: string; coverage: string; status: string; access_status: string; access_error: string; ssl_enabled: boolean; description: string; sources: CdnSource[]; create_time: string; update_time: string }
 interface CdnOperationLog { event_id: string; event_name: string; event_time: string; domains: string[]; operator: string; access_key_id: string; source_ip: string; region_id: string; request_id: string; success: boolean; error_code: string; error_message: string }
+interface OssBucket { name: string; region: string; endpoint: string; creation_time: string; storage_class: string; object_count: number | null; storage_size: number | null; stat_error: string }
 
 const route = useRoute()
 const router = useRouter()
@@ -713,7 +753,7 @@ const account = ref<AliyunAccount>()
 const accountLoading = ref(false)
 const summaryRefreshing = ref(false)
 const balanceRefreshing = ref(false)
-const activeTab = ref('servers')
+const activeTab = ref(['servers', 'domains', 'esa', 'cdn', 'oss'].includes(String(route.query.tab)) ? String(route.query.tab) : 'servers')
 const resourceTabsRef = ref<HTMLElement>()
 const resourceIndicatorStyle = ref({ width: '0px', transform: 'translateX(0px)' })
 const resourceTabItems = computed(() => [
@@ -721,6 +761,7 @@ const resourceTabItems = computed(() => [
 	{ name: 'domains', label: pub.lang('域名解析'), count: formatCount(account.value?.domain_count), status: '' },
 	{ name: 'esa', label: 'ESA', count: formatCount(account.value?.esa_count), status: '' },
 	{ name: 'cdn', label: 'CDN', count: formatCount(account.value?.cdn_count), status: account.value?.cdn_status === 'not_opened' ? pub.lang('未开通') : '' },
+	{ name: 'oss', label: 'OSS', count: formatCount(account.value?.oss_count), status: '' },
 ])
 const updateResourceIndicator = () => nextTick(() => {
 	const container = resourceTabsRef.value
@@ -807,6 +848,7 @@ const recordLogs = ref<RecordLog[]>([])
 const recordFormRef = ref<FormInstance>()
 const createRecordForm = () => ({ record_id: '', rr: '@', type: 'A', value: '', ttl: 600, line: 'default', priority: 10 })
 const recordForm = reactive(createRecordForm())
+const recordOssBucket = ref('')
 const removeRecordRrSpaces = () => { recordForm.rr = String(recordForm.rr || '').replace(/\s+/g, '') }
 const removeRecordValueSpaces = () => { recordForm.value = String(recordForm.value || '').replace(/\s+/g, '') }
 const recordRules = computed<FormRules>(() => ({
@@ -846,6 +888,7 @@ const esaRecordSaving = ref(false)
 const esaRecordFormRef = ref<FormInstance>()
 const createEsaRecordForm = () => ({ record_id: '', record_name: '', type: 'A/AAAA', value: '', ttl: 300, proxied: false, priority: 10, weight: 0, port: 80, flag: 0, tag: 'issue', source_type: 'Domain', host_policy: 'follow_hostname', biz_name: 'web', comment: '' })
 const esaRecordForm = reactive(createEsaRecordForm())
+const esaOssBucket = ref('')
 const esaRecordProxySupported = computed(() => ['A/AAAA', 'CNAME'].includes(esaRecordForm.type))
 const esaSiteName = computed(() => String(selectedEsaSite.value?.site_name || '').trim().toLowerCase().replace(/^\.+|\.+$/g, ''))
 const esaRecordNameSuffix = computed(() => esaSiteName.value ? `.${esaSiteName.value}` : '')
@@ -1009,6 +1052,24 @@ const cdnLogPage = ref(1)
 const cdnLogNextToken = ref('')
 const cdnLogTokens = ref<string[]>([''])
 
+const ossBuckets = ref<OssBucket[]>([])
+const ossCandidates = ref<OssBucket[]>([])
+const ossLoading = ref(false)
+const ossCandidateLoading = ref(false)
+const ossLoaded = ref(false)
+const ossKeyword = ref('')
+const ossPage = ref(1)
+const ossTotal = ref(0)
+const ossBucketDialogVisible = ref(false)
+const ossBucketSaving = ref(false)
+const ossBucketFormRef = ref<FormInstance>()
+const ossBucketForm = reactive({ name: '', region: 'oss-cn-hangzhou', storage_class: 'Standard', acl: 'private' })
+const ossBucketRules = computed<FormRules>(() => ({
+	name: [{ pattern: /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/, message: pub.lang('Bucket 名称必须为 3–63 位小写字母、数字或中划线'), trigger: 'blur' }],
+	region: [{ pattern: /^oss-[a-z0-9-]+$/, message: pub.lang('请输入正确的 OSS 地域'), trigger: 'change' }],
+}))
+const ossRegions = computed(() => Array.from(new Set(['oss-cn-hangzhou', 'oss-cn-shanghai', 'oss-cn-beijing', 'oss-cn-shenzhen', 'oss-cn-hongkong', ...ossCandidates.value.map(item => item.region)])))
+
 const loadAccount = async () => {
 	accountLoading.value = true
 	try {
@@ -1016,6 +1077,80 @@ const loadAccount = async () => {
 		if (!result?.status) return Message.request(result)
 		account.value = result.data
 	} finally { accountLoading.value = false }
+}
+const loadOssBuckets = async (page = ossPage.value, candidateOnly = false) => {
+	if (candidateOnly) ossCandidateLoading.value = true
+	else ossLoading.value = true
+	try {
+		const result = await request(routes.aliyun.oss_bucket_list.path, {
+			account_id: accountId,
+			page: candidateOnly ? 1 : page,
+			page_size: candidateOnly ? 100 : 20,
+			keyword: candidateOnly ? '' : ossKeyword.value,
+			include_stat: !candidateOnly,
+		})
+		if (!result?.status) return Message.request(result)
+		if (candidateOnly) ossCandidates.value = result.data.data || []
+		else {
+			ossPage.value = page
+			ossBuckets.value = result.data.data || []
+			ossTotal.value = result.data.total || 0
+			ossLoaded.value = true
+			if (account.value && !ossKeyword.value.trim()) account.value.oss_count = ossTotal.value
+			if (!ossCandidates.value.length) ossCandidates.value = result.data.data || []
+		}
+	} finally {
+		if (candidateOnly) ossCandidateLoading.value = false
+		else ossLoading.value = false
+	}
+}
+const ensureOssCandidates = () => ossCandidates.value.length ? Promise.resolve() : loadOssBuckets(1, true)
+const getOssCandidate = (name: string) => ossCandidates.value.find(item => item.name === name)
+const selectRecordOssBucket = (name: string) => {
+	const bucket = getOssCandidate(name)
+	if (!bucket) return
+	recordForm.type = 'CNAME'
+	recordForm.value = bucket.endpoint
+}
+const selectEsaOssBucket = (name: string) => {
+	const bucket = getOssCandidate(name)
+	if (bucket) esaRecordForm.value = bucket.endpoint
+}
+const handleEsaSourceTypeChange = () => {
+	if (esaRecordForm.source_type !== 'OSS') esaOssBucket.value = ''
+	else ensureOssCandidates()
+}
+const openOssBucketDialog = () => {
+	Object.assign(ossBucketForm, { name: '', region: 'oss-cn-hangzhou', storage_class: 'Standard', acl: 'private' })
+	ossBucketFormRef.value?.clearValidate()
+	ossBucketDialogVisible.value = true
+}
+const saveOssBucket = async () => {
+	if (!ossBucketFormRef.value || !await ossBucketFormRef.value.validate().catch(() => false)) return
+	ossBucketSaving.value = true
+	try {
+		const result = await request(routes.aliyun.oss_bucket_create.path, { account_id: accountId, ...ossBucketForm })
+		Message.request(result)
+		if (!result?.status) return
+		ossBucketDialogVisible.value = false
+		ossCandidates.value = []
+		await loadOssBuckets(1)
+	} finally { ossBucketSaving.value = false }
+}
+const removeOssBucket = async (bucket: OssBucket) => {
+	try { await ElMessageBox.confirm(pub.lang(`确定删除 Bucket ${bucket.name} 吗？Bucket 必须为空。`), pub.lang('删除 OSS Bucket'), { type: 'warning' }) }
+	catch { return }
+	const result = await request(routes.aliyun.oss_bucket_delete.path, { account_id: accountId, bucket: bucket.name, region: bucket.region })
+	Message.request(result)
+	if (!result?.status) return
+	ossCandidates.value = []
+	await loadOssBuckets(Math.min(ossPage.value, Math.max(1, Math.ceil(Math.max(0, ossTotal.value - 1) / 20))))
+}
+const openOssObjects = (bucket: OssBucket) => {
+	router.push({
+		path: `/aliyun/${accountId}/oss/${encodeURIComponent(bucket.name)}`,
+		query: { region: bucket.region },
+	})
 }
 const refreshSummary = async () => {
 	summaryRefreshing.value = true
@@ -1306,6 +1441,11 @@ const openCdnDomainDialog = (domain: CdnDomain) => {
 	cdnDomainForm.domain_name = domain.domain_name
 	cdnDomainForm.sources = domain.sources.length ? domain.sources.map(source => ({ ...source })) : [createCdnSource()]
 	cdnDomainDialogVisible.value = true
+	if (cdnDomainForm.sources.some(source => source.type === 'oss')) ensureOssCandidates()
+}
+const handleCdnSourceTypeChange = (source: CdnSource) => {
+	source.content = ''
+	if (source.type === 'oss') ensureOssCandidates()
 }
 const addCdnSource = () => cdnDomainForm.sources.push(createCdnSource())
 const removeCdnSource = (index: number) => {
@@ -1451,6 +1591,7 @@ const openRecordLogs = () => {
 const openRecordDialog = (record?: RecordItem) => {
 	resetRecordForm()
 	if (record) Object.assign(recordForm, record)
+	else { recordOssBucket.value = ''; ensureOssCandidates() }
 	recordDialogVisible.value = true
 }
 const resetRecordForm = () => { Object.assign(recordForm, createRecordForm()); recordFormRef.value?.clearValidate() }
@@ -1518,6 +1659,8 @@ const openEsaRecordDialog = (record?: EsaRecord) => {
 		host_policy: record.host_policy || 'follow_hostname',
 		comment: record.comment || '',
 	})
+	if (!record) { esaOssBucket.value = ''; ensureOssCandidates() }
+	else if (esaRecordForm.source_type === 'OSS') ensureOssCandidates()
 	esaRecordDialogVisible.value = true
 }
 const saveEsaRecord = async () => {
@@ -1593,11 +1736,13 @@ const batchEsaRecordAction = async (action: 'disable_proxy' | 'delete') => {
 	} finally { esaRecordBatchLoading.value = false }
 }
 const handleTabChange = (name: string | number) => {
+	if (route.query.tab !== name) router.replace({ query: { ...route.query, tab: String(name) } })
 	updateResourceIndicator()
 	if (name === 'servers' && !serverLoaded.value) loadServers()
 	if (name === 'domains' && !domainLoaded.value) loadDomains(1)
 	if (name === 'esa' && !esaLoaded.value) loadEsaSites(1)
 	if (name === 'cdn' && !cdnLoaded.value) loadCdnDomains(1)
+	if (name === 'oss' && !ossLoaded.value) loadOssBuckets(1)
 }
 
 const lineName = (code: string) => recordLines.value.find(item => item.code === code)?.name || code
@@ -1742,6 +1887,14 @@ const formatStorageSpec = (server: CloudServer) => {
 	const disk = server.disk_gb === null ? `${pub.lang('磁盘')} --` : `${pub.lang('磁盘')} ${formatNumber(server.disk_gb)} GB`
 	return `${bandwidth} / ${disk}`
 }
+const ossStorageClassName = (value: string) => ({ Standard: pub.lang('标准存储'), IA: pub.lang('低频访问'), Archive: pub.lang('归档存储'), ColdArchive: pub.lang('冷归档'), DeepColdArchive: pub.lang('深度冷归档') }[value] || value || '--')
+const formatBytes = (size: number) => {
+	const value = Number(size || 0)
+	if (value < 1024) return `${value} B`
+	if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`
+	if (value < 1024 ** 3) return `${(value / 1024 ** 2).toFixed(1)} MB`
+	return `${(value / 1024 ** 3).toFixed(1)} GB`
+}
 
 const refreshCurrentPage = () => {
 	const resourceRefresh = activeTab.value === 'domains'
@@ -1750,7 +1903,9 @@ const refreshCurrentPage = () => {
 			? loadEsaSites(esaPage.value)
 			: activeTab.value === 'cdn'
 				? loadCdnDomains(cdnPage.value)
-				: loadServers(true)
+				: activeTab.value === 'oss'
+					? loadOssBuckets(ossPage.value)
+					: loadServers(true)
 	return Promise.all([refreshSummary(), resourceRefresh])
 }
 const handleRefreshShortcut = (event: KeyboardEvent) => {
@@ -1775,7 +1930,7 @@ onMounted(async () => {
 		}
 	}, 30000)
 	await loadAccount()
-	await loadServers()
+	await (activeTab.value === 'servers' ? loadServers() : handleTabChange(activeTab.value))
 	updateResourceIndicator()
 })
 onBeforeUnmount(() => {
@@ -1812,6 +1967,8 @@ onBeforeUnmount(() => {
 .server-table-wrap { min-height: 0; flex: 1; }
 .cdn-pane { display: flex; height: calc(100vh - 23rem); min-height: 36rem; flex-direction: column; }
 .cdn-table-wrap { min-height: 0; flex: 1; }
+.oss-pane { display: flex; height: calc(100vh - 23rem); min-height: 36rem; flex-direction: column; }
+.oss-table-wrap { min-height: 0; flex: 1; }
 .resource-toolbar { justify-content: space-between; gap: 1.6rem; margin-bottom: 1rem; }
 .resource-toolbar__filters { min-width: 0; gap: .8rem; .el-input { width: 30rem; } .el-select { width: 15rem; } }
 .resource-toolbar__actions { flex: 0 0 auto; gap: .6rem; }

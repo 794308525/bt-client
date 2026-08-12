@@ -64,6 +64,7 @@ class Sqlite {
                 this.checkField('aliyun_account', 'esa_count', 'INTEGER', '-1')
                 this.checkField('aliyun_account', 'cdn_count', 'INTEGER', '-1')
                 this.checkField('aliyun_account', 'cdn_status', 'TEXT', '"unknown"')
+                this.checkField('aliyun_account', 'oss_count', 'INTEGER', '-1')
                 this.checkField('aliyun_account', 'resource_refresh_time', 'INTEGER', '0')
                 this.checkField('aliyun_account', 'resource_error', 'TEXT', '""')
                 this.checkField('aliyun_account', 'resource_error_detail', 'TEXT', '""')
@@ -327,6 +328,7 @@ class Sqlite {
             \`esa_count\` INTEGER DEFAULT -1,                 -- ESA 站点数量，-1为待获取
             \`cdn_count\` INTEGER DEFAULT -1,                 -- CDN 域名数量，-1为待获取
             \`cdn_status\` TEXT DEFAULT "unknown",            -- CDN 服务状态：active/not_opened/unknown
+            \`oss_count\` INTEGER DEFAULT -1,                 -- OSS Bucket 数量，-1为待获取
             \`resource_refresh_time\` INTEGER DEFAULT 0,       -- 资源统计刷新时间
             \`resource_error\` TEXT DEFAULT "",               -- 最近一次资源刷新错误
             \`resource_error_detail\` TEXT DEFAULT "",        -- 最近一次资源刷新详细错误

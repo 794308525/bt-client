@@ -1,6 +1,9 @@
 'use strict';
 
 const { Controller } = require('ee-core');
+const { dialog } = require('electron');
+const Electron = require('ee-core/electron');
+const path = require('path');
 const { pub } = require('../class/public.js');
 const { aliyunService, normalizeError } = require('../service/aliyun.js');
 
@@ -33,7 +36,7 @@ class AliyunController extends Controller {
     ].concat(pub.M('aliyun_group').order('group_id ASC').select());
 
     const accounts = pub.M(this.TABLE)
-      .field('account_id, group_id, remark, access_key_id, balance, balance_currency, balance_refresh_time, server_count, domain_count, esa_count, cdn_count, cdn_status, sort, addtime, update_time, resource_refresh_time, resource_error, resource_error_detail')
+      .field('account_id, group_id, remark, access_key_id, balance, balance_currency, balance_refresh_time, server_count, domain_count, esa_count, cdn_count, cdn_status, oss_count, sort, addtime, update_time, resource_refresh_time, resource_error, resource_error_detail')
       .order('sort DESC, account_id DESC')
       .select();
 
@@ -126,6 +129,7 @@ class AliyunController extends Controller {
       esa_count: -1,
       cdn_count: -1,
       cdn_status: 'unknown',
+      oss_count: -1,
       resource_refresh_time: 0,
       resource_error: '',
       resource_error_detail: '',
@@ -329,6 +333,56 @@ class AliyunController extends Controller {
     } catch (error) {
       return sendAliyunError(event, args.channel, error);
     }
+  }
+
+  async oss_bucket_list(args, event) {
+    try { return pub.send_success(event, args.channel, await aliyunService.listOssBuckets(args.data.account_id, args.data)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async oss_bucket_create(args, event) {
+    try { return pub.send_success(event, args.channel, await aliyunService.createOssBucket(args.data.account_id, args.data)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async oss_bucket_delete(args, event) {
+    try { return pub.send_success(event, args.channel, await aliyunService.deleteOssBucket(args.data.account_id, args.data.bucket, args.data.region)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async oss_object_list(args, event) {
+    try { return pub.send_success(event, args.channel, await aliyunService.listOssObjects(args.data.account_id, args.data)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async oss_object_upload(args, event) {
+    try {
+      const selected = await dialog.showOpenDialog(Electron.mainWindow, {
+        title: pub.lang('选择要上传到 OSS 的文件'),
+        properties: ['openFile', 'multiSelections'],
+      });
+      if (selected.canceled || !selected.filePaths.length) return pub.send_success(event, args.channel, { canceled: true, data: [] });
+      const data = await aliyunService.uploadOssObjects(args.data.account_id, args.data, selected.filePaths);
+      return pub.send_success(event, args.channel, { canceled: false, data });
+    } catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async oss_object_download(args, event) {
+    try {
+      const objectName = String(args.data.object_name || '');
+      const selected = await dialog.showSaveDialog(Electron.mainWindow, {
+        title: pub.lang('保存 OSS 文件'),
+        defaultPath: path.basename(objectName) || 'download',
+      });
+      if (selected.canceled || !selected.filePath) return pub.send_success(event, args.channel, { canceled: true });
+      await aliyunService.downloadOssObject(args.data.account_id, args.data, path.resolve(selected.filePath));
+      return pub.send_success(event, args.channel, { canceled: false, path: selected.filePath });
+    } catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async oss_object_delete(args, event) {
+    try { return pub.send_success(event, args.channel, await aliyunService.deleteOssObjects(args.data.account_id, args.data)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
   }
 
   async record_list(args, event) {
