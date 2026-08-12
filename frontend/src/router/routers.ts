@@ -21,6 +21,10 @@ export const routeList: Array<RouteRecordRaw> = [
 				component: () => import('@views/xterm/index.vue'),
 			},
 			{
+				path: '/aliyun',
+				component: () => import('@views/aliyun/index.vue'),
+			},
+			{
 				path: '/setting',
 				component: () => import('@views/setting/index.vue'),
 			},

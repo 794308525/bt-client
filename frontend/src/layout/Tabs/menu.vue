@@ -21,6 +21,13 @@
 					<span class="title">{{ pub.lang('终端') }}</span>
 				</div>
 			</li>
+			<li :class="{ active: $route.path === '/aliyun' }" @click="goTo('/aliyun')">
+				<div class="bg-color"></div>
+				<div class="flex bg-text">
+					<bt-icon name="aliyun" color="1f1f1f" size="16" class="z-1" />
+					<span class="title">{{ pub.lang('阿里云') }}</span>
+				</div>
+			</li>
 			<!-- <li :class="{ active: $route.path === '/batchSender' }" @click="goTo('/batchSender')">
 				<div class="bg-color"></div>
 				<div class="flex bg-text">
