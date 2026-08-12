@@ -2,6 +2,7 @@ const { Application } = require('ee-core');
 const { ContextMenu } = require('./class/menu.js');
 const { pub } = require('./class/public.js');
 const Electron = require('ee-core/electron');
+const { sslDeployService } = require('./service/ssl-deploy.js');
 
 
 class Index extends Application {
@@ -16,7 +17,7 @@ class Index extends Application {
    * core app have been loaded
    */
   async ready() {
-    // do some things
+    sslDeployService.start();
   }
 
   /**
@@ -87,6 +88,20 @@ class Index extends Application {
 
     // 注册快捷键
     win.webContents.on('before-input-event', (event, input) => {
+      // 阿里云页面使用系统刷新快捷键刷新业务数据，避免整页重载丢失筛选状态
+      if (
+        input.type === 'keyDown' &&
+        (input.control || input.meta) &&
+        !input.shift &&
+        !input.alt &&
+        (input.key === 'r' || input.key === 'R') &&
+        win.webContents.getURL().includes('#/aliyun')
+      ) {
+        event.preventDefault();
+        win.webContents.send('aliyun-refresh');
+        return;
+      }
+
       // // F5 刷新
       // if (input.type === 'keyDown' && input.key === 'F5') {
       //   event.sender.reload();
@@ -141,6 +156,7 @@ class Index extends Application {
    */
   async beforeClose() {
     // do some things
+    sslDeployService.stop();
     // 记忆当前窗口大小和位置
     let win = this.electron.mainWindow;
     if (!win.isMaximized()) {

@@ -165,6 +165,7 @@ class IndexController extends Controller {
         pub.M('ssh_info').decryptAll();
         pub.M('proxy_info').decryptAll();
         pub.M('aliyun_account').decryptAll();
+        pub.M('ssl_channel').decryptAll();
 
         // 保存密码加密方式
         if(!pub.C('init_password') || pub.C('not_password') === true){
@@ -180,6 +181,7 @@ class IndexController extends Controller {
         pub.M('ssh_info').encryptAll();
         pub.M('proxy_info').encryptAll();
         pub.M('aliyun_account').encryptAll();
+        pub.M('ssl_channel').encryptAll();
         
         return pub.send_success_msg(event,channel,pub.lang('管理密码设置成功'))
     }
