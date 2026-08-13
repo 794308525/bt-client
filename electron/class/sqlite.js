@@ -38,39 +38,34 @@ class Sqlite {
         this.DB_OBJ = sqlite3(this.DB_FILE)
 
 
-        // 判断文件是否存在
-        if(!fs.existsSync(this.DB_FILE) || fs.statSync(this.DB_FILE).size == 0){
+        if(!IS_CHECK_TABLE.status){
+            // 旧版数据库可能缺少新增表，必须先建表再补字段。
             this.create()
-        }else{
-            // 检查并添加不存在的字段
-            if(!IS_CHECK_TABLE.status){
-                this.checkField('panel_info', 'area', 'TEXT', '""')
-                this.checkField('ssh_info', 'area', 'TEXT', '""')
-                this.checkField('panel_info', 'proxy_id', 'INTEGER', '0')
-                this.checkField('ssh_info', 'proxy_id', 'INTEGER', '0')
-                this.checkField('panel_info', 'group_id', 'INTEGER', '0')
-                this.checkField('ssh_info', 'group_id', 'INTEGER', '0')
-                this.checkField('ssh_info', 'is_recording', 'INTEGER', '0')
-                this.checkField('ssh_info', 'os_type', 'TEXT', '"Linux"')
-                this.checkField('ssh_info', 'os_name', 'TEXT', '"Linux"')
-                this.checkField('ssh_info', 'mstsc_options', 'TEXT', '"{}"')
-                this.checkField('ssh_info', 'sort', 'INTEGER', '0')
-                this.checkField('panel_info', 'sort', 'INTEGER', '0')
-                this.checkField('panel_info', 'ov', 'INTEGER', '-1')
-                this.checkField('panel_info', 'server_id', 'TEXT', '""')
-                this.checkField('panel_info', 'current_disk', 'TEXT', '""')
-                this.checkField('aliyun_account', 'balance_currency', 'TEXT', '"CNY"')
-                this.checkField('aliyun_account', 'balance_refresh_time', 'INTEGER', '0')
-                this.checkField('aliyun_account', 'esa_count', 'INTEGER', '-1')
-                this.checkField('aliyun_account', 'cdn_count', 'INTEGER', '-1')
-                this.checkField('aliyun_account', 'cdn_status', 'TEXT', '"unknown"')
-                this.checkField('aliyun_account', 'oss_count', 'INTEGER', '-1')
-                this.checkField('aliyun_account', 'resource_refresh_time', 'INTEGER', '0')
-                this.checkField('aliyun_account', 'resource_error', 'TEXT', '""')
-                this.checkField('aliyun_account', 'resource_error_detail', 'TEXT', '""')
-                this.create()
-                IS_CHECK_TABLE.status = true
-            }
+            this.checkField('panel_info', 'area', 'TEXT', '""')
+            this.checkField('ssh_info', 'area', 'TEXT', '""')
+            this.checkField('panel_info', 'proxy_id', 'INTEGER', '0')
+            this.checkField('ssh_info', 'proxy_id', 'INTEGER', '0')
+            this.checkField('panel_info', 'group_id', 'INTEGER', '0')
+            this.checkField('ssh_info', 'group_id', 'INTEGER', '0')
+            this.checkField('ssh_info', 'is_recording', 'INTEGER', '0')
+            this.checkField('ssh_info', 'os_type', 'TEXT', '"Linux"')
+            this.checkField('ssh_info', 'os_name', 'TEXT', '"Linux"')
+            this.checkField('ssh_info', 'mstsc_options', 'TEXT', '"{}"')
+            this.checkField('ssh_info', 'sort', 'INTEGER', '0')
+            this.checkField('panel_info', 'sort', 'INTEGER', '0')
+            this.checkField('panel_info', 'ov', 'INTEGER', '-1')
+            this.checkField('panel_info', 'server_id', 'TEXT', '""')
+            this.checkField('panel_info', 'current_disk', 'TEXT', '""')
+            this.checkField('aliyun_account', 'balance_currency', 'TEXT', '"CNY"')
+            this.checkField('aliyun_account', 'balance_refresh_time', 'INTEGER', '0')
+            this.checkField('aliyun_account', 'esa_count', 'INTEGER', '-1')
+            this.checkField('aliyun_account', 'cdn_count', 'INTEGER', '-1')
+            this.checkField('aliyun_account', 'cdn_status', 'TEXT', '"unknown"')
+            this.checkField('aliyun_account', 'oss_count', 'INTEGER', '-1')
+            this.checkField('aliyun_account', 'resource_refresh_time', 'INTEGER', '0')
+            this.checkField('aliyun_account', 'resource_error', 'TEXT', '""')
+            this.checkField('aliyun_account', 'resource_error_detail', 'TEXT', '""')
+            IS_CHECK_TABLE.status = true
         }
         
     }
