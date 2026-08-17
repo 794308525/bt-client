@@ -24,9 +24,9 @@
 					<el-button text class="panel-secondary-action" @click="exportPanel">{{ pub.lang('导出') }}</el-button>
 				</div>
 				<div class="panel-toolbar flex items-center min-w-0">
-					<div class="panel-control flex items-center">
+					<div class="panel-control panel-control--group flex items-center">
 						<span class="panel-control__label">{{ pub.lang('分组') }}</span>
-						<div ref="groupSegmentRef" class="panel-segmented flex items-center">
+						<div ref="groupSegmentRef" class="panel-segmented panel-group-segmented flex items-center">
 							<el-radio-group
 								:model-value="currentGroupID"
 								@input="switchGroup"
@@ -36,6 +36,7 @@
 									:style="groupIndicatorStyle" />
 								<el-radio-button
 									v-for="item in groupList"
+									:key="item.group_id"
 									:label="item.group_name"
 									:value="item.group_id">
 									<span>{{ item.group_name }}</span>
@@ -55,11 +56,30 @@
 									:icon="Setting"
 									class="panel-segmented__tool"
 									@click="groupManageVisible = true" />
+								</el-tooltip>
+						</div>
+						<div class="panel-group-select">
+							<el-select v-model="currentGroupID" @change="switchGroup">
+								<el-option
+									v-for="item in groupList"
+									:key="item.group_id"
+									:label="showGroupCount ? `${item.group_name} ${item.panel_count || 0}` : item.group_name"
+									:value="item.group_id" />
+							</el-select>
+							<el-tooltip
+								:content="pub.lang('管理分组')"
+								:enterable="false"
+								placement="bottom">
+								<el-button
+									text
+									:icon="Setting"
+									class="panel-segmented__tool"
+									@click="groupManageVisible = true" />
 							</el-tooltip>
 						</div>
 					</div>
-					<el-divider direction="vertical"></el-divider>
-					<div class="panel-control flex items-center flex-shrink-0">
+					<el-divider direction="vertical" class="panel-toolbar-divider"></el-divider>
+					<div class="panel-control panel-control--sort flex items-center flex-shrink-0">
 						<span class="panel-control__label">{{ pub.lang('排序') }}</span>
 						<div ref="sortSegmentRef" class="panel-segmented flex items-center">
 							<el-radio-group
@@ -77,23 +97,25 @@
 							</el-radio-group>
 						</div>
 					</div>
-					<el-divider direction="vertical"></el-divider>
-					<el-switch
-						v-model="isShowIP"
-						inline-prompt
-						:active-text="pub.lang('隐藏IP')"
-						:inactive-text="pub.lang('显示IP')"
-						:active-action-icon="Hide"
-						:inactive-action-icon="View"
-						@change="isShowIP = !!isShowIP" />
-					<el-divider direction="vertical"></el-divider>
-					<el-tooltip :content="pub.lang('刷新')" :enterable="false" placement="bottom">
-						<el-button
-							text
-							:icon="Refresh"
-							class="panel-tool-icon mr-[.4rem]"
-							@click="getPanelList()" />
-					</el-tooltip>
+					<el-divider direction="vertical" class="panel-toolbar-divider"></el-divider>
+					<div class="panel-utility-actions">
+						<el-switch
+							v-model="isShowIP"
+							inline-prompt
+							:active-text="pub.lang('隐藏IP')"
+							:inactive-text="pub.lang('显示IP')"
+							:active-action-icon="Hide"
+							:inactive-action-icon="View"
+							@change="isShowIP = !!isShowIP" />
+						<el-divider direction="vertical" class="panel-utility-divider"></el-divider>
+						<el-tooltip :content="pub.lang('刷新')" :enterable="false" placement="bottom">
+							<el-button
+								text
+								:icon="Refresh"
+								class="panel-tool-icon"
+								@click="getPanelList()" />
+						</el-tooltip>
+					</div>
 					<div :class="['panel-search', { 'panel-search--active': isActive }]">
 						<el-icon :size="24" class="mr-[1.6rem]">
 							<svg width="24" height="24" viewBox="0 0 24 24" focusable="false" class="NMm5M">
@@ -130,6 +152,7 @@
 								item.is_demo,
 								isShowIP,
 								canDragSort,
+								isReconnecting(item.panel_id),
 								draggedPanelID === item.panel_id,
 							]"
 							:xs="24"
@@ -290,12 +313,26 @@
 									</div>
 								</template>
 								<template v-else>
-									<div class="h-[14rem]">
-										<span
+									<div class="panel-error-state h-[14rem]">
+										<div class="panel-error-message">
+											<span
 											v-if="item.panelInfo.isError"
 											:class="item.device_status === 'online' ? 'text-amber-500' : 'text-red-500'"
 											>[{{ getDeviceStatusText(item) }}] {{ item.panelInfo.errorMsg }}</span
 										>
+										</div>
+										<el-tooltip
+											:content="pub.lang('重新检测当前地址，并自动尝试备用协议和设备可达性')"
+											:enterable="false"
+											placement="top">
+											<el-button
+												class="panel-reconnect-button"
+												:icon="Refresh"
+												:loading="isReconnecting(item.panel_id)"
+												@click.stop="reconnectPanel(item)">
+												{{ isReconnecting(item.panel_id) ? pub.lang('正在尝试') : pub.lang('手动重连') }}
+											</el-button>
+										</el-tooltip>
 									</div>
 								</template>
 							</el-card>
@@ -414,6 +451,7 @@ watch(
 )
 watch(sortMode, () => updateSegmentIndicator(sortSegmentRef, sortIndicatorStyle), { flush: 'post' })
 const draggedPanelID = ref<number | null>(null)
+const reconnectingPanelIDs = ref<Set<number>>(new Set())
 let dragOrderChanged = false
 let dragMoveFrame: number | null = null
 let pendingDragMove: {
@@ -441,6 +479,7 @@ const diskProgress = (item: any, path: string) => {
 }
 
 const getDeviceStatusText = (item: any) => {
+	if (isReconnecting(item.panel_id)) return pub.lang('重连中')
 	if (item.device_status === 'online') {
 		return item.panelInfo.isError ? pub.lang('设备在线 / 面板异常') : pub.lang('在线')
 	}
@@ -448,6 +487,7 @@ const getDeviceStatusText = (item: any) => {
 	return item.panelInfo.isError ? pub.lang('连接异常') : pub.lang('检测中')
 }
 const getDeviceStatusClass = (item: any) => {
+	if (isReconnecting(item.panel_id)) return 'checking'
 	if (item.device_status === 'online' && item.panelInfo.isError) return 'warning'
 	if (item.device_status === 'online') return 'online'
 	if (item.device_status === 'offline' || item.panelInfo.isError) return 'offline'
@@ -737,6 +777,45 @@ const getUrlLink = (url: string) => {
 const copyPanelAddress = (url: string) => {
 	copyText({ value: getUrlLink(url), success: pub.lang('IP复制成功') })
 }
+const isReconnecting = (panelID: number) => reconnectingPanelIDs.value.has(panelID)
+const reconnectPanel = async (item: any) => {
+	if (isReconnecting(item.panel_id)) return
+	reconnectingPanelIDs.value = new Set([...reconnectingPanelIDs.value, item.panel_id])
+	try {
+		if (item.is_demo) {
+			await new Promise(resolve => setTimeout(resolve, 1200))
+			const demoSuccess = createDemoPanels(1)[0]
+			item.device_status = demoSuccess.device_status
+			item.panel_status = demoSuccess.panel_status
+			item.is_open = demoSuccess.is_open
+			item.panelInfo = demoSuccess.panelInfo
+			Message.success(pub.lang('演示：面板已重新连接，刷新列表后可再次体验'))
+			return
+		}
+		const result: any = await common.sendAsync({
+			route: routes.panel.reconnect.path,
+			data: { panel_id: item.panel_id },
+			timeout: 30000,
+		})
+		if (result.protocol_changed) {
+			item.url = result.protocol_changed.url
+			if (result.protocol_changed.protocol === 'http') Message.warn(result.protocol_changed.msg)
+			else Message.success(result.protocol_changed.msg)
+		}
+		applyPanelUpdate(result)
+		if (result.status === 0 && !result.data?.msg) {
+			Message.success(pub.lang('面板已重新连接'))
+		} else {
+			Message.error(result.data?.msg || result.msg || pub.lang('重连失败，请检查面板配置和网络状态'))
+		}
+	} catch (error: any) {
+		Message.error(error?.message === '请求超时' ? pub.lang('重连超时，请稍后再试') : pub.lang('重连失败'))
+	} finally {
+		const nextIDs = new Set(reconnectingPanelIDs.value)
+		nextIDs.delete(item.panel_id)
+		reconnectingPanelIDs.value = nextIDs
+	}
+}
 // 设置磁盘路径
 const onChangeDiskPath = (val: any, item: any) => {
 	if (item.is_demo) return
@@ -952,7 +1031,7 @@ const cutAuthStatus = (val: any) => {
 }
 // 切换分组
 const switchGroup = (val: any) => {
-	currentGroupID.value = val.target._value
+	currentGroupID.value = val?.target?._value ?? val
 	getPanelList()
 }
 // 负载状态
@@ -965,6 +1044,30 @@ const processingQueue: Array<any> = []; // 用于分批处理的队列
 let animationFrameRequested = false; // 标记是否已请求下一帧动画
 const BATCH_SIZE = 10; // 每次处理的面板数量
 
+const applyPanelUpdate = (bufferedResult: any) => {
+	const item = panelByID.value.get(bufferedResult.panel_id)
+	if (!item || item.is_demo || !bufferedResult.data) return
+	item.device_status = bufferedResult.device_status || item.device_status || 'unknown'
+	item.panel_status = bufferedResult.panel_status || item.panel_status || 'unknown'
+	item.panelInfo = bufferedResult.data.msg
+		? Object.assign({}, { isError: true, errorMsg: bufferedResult.data.msg })
+		: bufferedResult.data
+	item.is_open = bufferedResult.is_open
+	if (item.current_disk === '' && typeof bufferedResult.data.msg === 'undefined') {
+		item.current_disk = bufferedResult.data.disk[0].path
+	}
+	if (bufferedResult.ov === -1 && typeof bufferedResult.data.msg === 'undefined') {
+		item.ov = 0
+	} else if (typeof bufferedResult.ov !== 'undefined') {
+		item.ov = cutAuthStatus(bufferedResult.ov)
+	}
+	const urlMatch = item.url.match(/\/\/(.*?):/)
+	if (urlMatch && urlMatch[1] && item.title === urlMatch[1] && typeof item.panelInfo.isError === 'undefined') {
+		item.title = bufferedResult.data.title
+	}
+	if (item.ov > 0) item.is_open = true
+}
+
 const processUpdatesInBatches = () => {
     if (processingQueue.length === 0) {
         animationFrameRequested = false; // 没有更多更新需要处理，重置标志
@@ -974,32 +1077,7 @@ const processUpdatesInBatches = () => {
     // 每次处理一小批更新
     const updatesToProcess = processingQueue.splice(0, BATCH_SIZE);
 
-    updatesToProcess.forEach((bufferedResult) => {
-        // 找到对应的面板并更新其信息
-        const item = panelByID.value.get(bufferedResult.panel_id);
-		if (item && !item.is_demo) {
-			item.device_status = bufferedResult.device_status || item.device_status || 'unknown';
-			item.panel_status = bufferedResult.panel_status || item.panel_status || 'unknown';
-            item.panelInfo = bufferedResult.data.msg
-                ? Object.assign({}, { isError: true, errorMsg: bufferedResult.data.msg })
-                : bufferedResult.data;
-            item.is_open = bufferedResult.is_open;
-            if (item.current_disk === '' && typeof bufferedResult.data.msg === 'undefined') {
-                item.current_disk = bufferedResult.data.disk[0].path;
-            }
-            if (bufferedResult.ov === -1 && typeof bufferedResult.data.msg === 'undefined') {
-                item.ov = 0; // 获取授权异常且数据库中没有授权状态
-            } else {
-                item.ov = cutAuthStatus(bufferedResult.ov);
-            }
-            // 如果服务器名等于url则更新列表信息(ps:后端接口已处理)
-            const urlMatch = item.url.match(/\/\/(.*?):/);
-            if (urlMatch && urlMatch[1] && item.title === urlMatch[1] && typeof item.panelInfo.isError === 'undefined') {
-                item.title = bufferedResult.data.title;
-            }
-            if (item.ov > 0) item.is_open = true;
-        }
-    });
+    updatesToProcess.forEach(applyPanelUpdate);
 
     // 如果队列中还有剩余项，请求下一帧动画继续处理
     if (processingQueue.length > 0) {
@@ -1133,9 +1211,12 @@ onUnmounted(() => {
 	color: #bdbdbd;
 }
 .panel__header {
+	min-width: 0;
 	gap: 2.4rem;
 }
 .panel-primary-actions {
+	min-width: 0;
+
 	.panel-brand {
 		margin-right: 1.6rem;
 		padding-right: 1.6rem;
@@ -1190,9 +1271,11 @@ onUnmounted(() => {
 	}
 }
 .panel-toolbar {
+	max-width: 100%;
 	gap: 0.4rem;
 }
 .panel-control {
+	min-width: 0;
 	gap: 0.8rem;
 }
 .panel-control__label {
@@ -1204,6 +1287,8 @@ onUnmounted(() => {
 .panel-segmented {
 	box-sizing: border-box;
 	height: 3.4rem;
+	min-width: 0;
+	flex-shrink: 0;
 	padding: 0.3rem;
 	border: 1px solid var(--el-border-color);
 	border-radius: 999px;
@@ -1211,7 +1296,10 @@ onUnmounted(() => {
 
 	.panel-segmented__group {
 		position: relative;
+		display: flex;
 		height: 2.6rem;
+		min-width: 0;
+		flex-wrap: nowrap;
 		padding: 0;
 		border: 0;
 		border-radius: 999px;
@@ -1235,6 +1323,7 @@ onUnmounted(() => {
 
 	:deep(.el-radio-button) {
 		z-index: 1;
+		flex: 0 0 auto;
 	}
 
 	:deep(.el-radio-button__inner) {
@@ -1273,6 +1362,31 @@ onUnmounted(() => {
 		opacity: 0.86;
 	}
 }
+.panel-group-segmented {
+	max-width: 42rem;
+
+	.panel-segmented__group {
+		overflow-x: auto;
+		overflow-y: hidden;
+		scrollbar-width: none;
+
+		&::-webkit-scrollbar {
+			display: none;
+		}
+	}
+}
+.panel-group-select {
+	display: none;
+	min-width: 0;
+	align-items: center;
+	flex: 1;
+	gap: 0.4rem;
+
+	:deep(.el-select) {
+		min-width: 0;
+		flex: 1;
+	}
+}
 .panel-segmented__tool {
 	width: 2.6rem;
 	height: 2.6rem;
@@ -1287,6 +1401,15 @@ onUnmounted(() => {
 		background-color: var(--el-bg-color);
 	}
 }
+.panel-utility-actions {
+	display: flex;
+	align-items: center;
+	flex: 0 0 auto;
+	gap: 0.4rem;
+}
+.panel-utility-divider {
+	margin: 0 0.4rem;
+}
 .panel-tool-icon {
 	width: 3.2rem;
 	height: 3.2rem;
@@ -1299,13 +1422,17 @@ onUnmounted(() => {
 	}
 }
 .panel-search {
+	width: clamp(16rem, 18vw, 28rem);
+	min-width: 0;
+	flex: 0 1 auto;
 	background-color: #f2f2f2;
 	border-radius: 8px;
 	display: flex;
 	align-items: center;
 	padding-left: 1rem;
 	:deep(.el-input) {
-		width: 28rem;
+		width: 100%;
+		min-width: 0;
 		height: 3.8rem;
 		.el-input__wrapper {
 			background-color: #f2f2f2;
@@ -1331,6 +1458,127 @@ onUnmounted(() => {
 				background-color: white;
 			}
 		}
+	}
+}
+@media (max-width: 1500px) {
+	.panel__header {
+		align-items: flex-start;
+		flex-direction: column;
+		gap: 1.4rem;
+	}
+
+	.panel-primary-actions,
+	.panel-toolbar {
+		width: 100%;
+	}
+
+	.panel-toolbar {
+		justify-content: flex-start;
+		flex-wrap: wrap;
+		gap: 0.8rem;
+	}
+
+	.panel-search {
+		margin-left: auto;
+	}
+}
+@media (max-width: 1280px) {
+	.panel {
+		padding-right: 2rem;
+		padding-left: 2rem;
+	}
+
+	.panel-brand__site {
+		display: none !important;
+	}
+
+	.panel-group-segmented,
+	.panel-toolbar-divider {
+		display: none;
+	}
+
+	.panel-control--group {
+		flex: 1 1 20rem;
+	}
+
+	.panel-group-select {
+		display: flex;
+		max-width: 28rem;
+	}
+
+	.panel-search {
+		max-width: 100%;
+		flex: 1 1 22rem;
+		margin-left: 0;
+	}
+}
+@media (max-width: 1080px) {
+	.panel-toolbar {
+		display: grid;
+		grid-template-areas:
+			'group sort utility'
+			'search search search';
+		grid-template-columns: minmax(18rem, 1fr) auto auto;
+		align-items: center;
+	}
+
+	.panel-control--group {
+		grid-area: group;
+	}
+
+	.panel-control--sort {
+		grid-area: sort;
+	}
+
+	.panel-utility-actions {
+		grid-area: utility;
+	}
+
+	.panel-search {
+		grid-area: search;
+		width: 100%;
+		max-width: none;
+	}
+
+	.panel-group-select {
+		max-width: none;
+	}
+
+	.panel-segmented :deep(.el-radio-button__inner) {
+		padding-right: 0.85rem;
+		padding-left: 0.85rem;
+	}
+}
+@media (max-width: 760px) {
+	.panel-primary-actions {
+		align-items: flex-start;
+		flex-wrap: wrap;
+		gap: 0.6rem;
+	}
+
+	.panel-primary-actions .panel-brand {
+		width: 100%;
+		margin-right: 0;
+		margin-bottom: 0.4rem;
+		padding-right: 0;
+		border-right: 0;
+	}
+
+	.panel-toolbar {
+		grid-template-areas:
+			'group'
+			'sort'
+			'utility'
+			'search';
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.panel-control--sort {
+		overflow-x: auto;
+	}
+
+	.panel-utility-actions {
+		justify-content: flex-end;
 	}
 }
 .panel__content {
@@ -1404,6 +1652,32 @@ onUnmounted(() => {
 	&:hover,
 	&:focus-visible {
 		color: var(--el-color-primary);
+	}
+}
+.panel-error-state {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	justify-content: space-between;
+	padding: 0.8rem 0 0.4rem;
+}
+.panel-error-message {
+	max-width: 100%;
+	line-height: 1.7;
+	overflow-wrap: anywhere;
+}
+.panel-reconnect-button {
+	align-self: center;
+	min-width: 10rem;
+	color: var(--el-color-primary);
+	border-color: var(--el-color-primary-light-5);
+	background-color: var(--el-color-primary-light-9);
+
+	&:hover,
+	&:focus-visible {
+		color: #ffffff;
+		border-color: var(--el-color-primary);
+		background-color: var(--el-color-primary);
 	}
 }
 .panel-device-status {

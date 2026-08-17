@@ -65,12 +65,26 @@
 			<el-card
 				v-for="account in filteredAccounts"
 				:key="account.account_id"
+				:data-account-id="account.account_id"
 				class="aliyun-card"
+				:class="{ 'aliyun-card--dragging': draggedAccountId === account.account_id }"
+				@dragover.prevent="queueAccountMove(account.account_id, $event)"
+				@drop.stop.prevent="finishAccountDrag"
 				@click="openAccountDetail(account)"
 				shadow="hover">
 				<template #header>
 					<div class="aliyun-card__header">
 						<div class="aliyun-card__identity">
+							<span
+								class="aliyun-card__drag-handle"
+								:class="{ 'aliyun-card__drag-handle--disabled': !canDragSort }"
+								:draggable="canDragSort"
+								:title="dragHandleTitle"
+								@click.stop
+								@dragstart.stop="startAccountDrag(account.account_id, $event)"
+								@dragend.stop="finishAccountDrag">
+								<bt-icon name="sort" size="16" color="#939393" />
+							</span>
 							<div class="aliyun-card__logo">
 								<bt-icon name="aliyun" size="22" />
 							</div>
@@ -85,11 +99,8 @@
 							<el-button text :icon="MoreFilled" :loading="refreshingAccounts.has(account.account_id)" class="aliyun-card__more" @click.stop />
 							<template #dropdown>
 								<el-dropdown-menu>
-									<el-dropdown-item command="refresh" :icon="Refresh">{{ pub.lang('刷新') }}</el-dropdown-item>
 									<el-dropdown-item command="edit">{{ pub.lang('编辑') }}</el-dropdown-item>
-									<el-dropdown-item command="remove" divided>{{
-										pub.lang('删除')
-									}}</el-dropdown-item>
+									<el-dropdown-item command="remove" divided>{{ pub.lang('删除') }}</el-dropdown-item>
 								</el-dropdown-menu>
 							</template>
 						</el-dropdown>
@@ -98,34 +109,36 @@
 
 				<div class="aliyun-balance">
 					<strong>{{ formatBalance(account.balance) }}</strong>
-					<span>{{ pub.lang('余额') }}</span>
+					<span>
+						{{ pub.lang('余额') }}
+						<el-button
+							text
+							circle
+							:icon="Refresh"
+							:loading="refreshingAccounts.has(account.account_id)"
+							class="aliyun-balance__refresh"
+							:title="pub.lang('刷新')"
+							@click.stop="refreshAccount(account, true)" />
+						<small>{{ formatRefreshTime(account.resource_refresh_time) }}</small>
+						<em v-if="resourceStatusText(account, 'balance')">{{ resourceStatusText(account, 'balance') }}</em>
+					</span>
 				</div>
 				<div class="aliyun-resource-list">
 					<div class="aliyun-resource">
 						<span class="aliyun-resource__unit">{{ pub.lang('服务器') }}</span>
-						<span class="aliyun-resource__value">{{ formatCount(account.server_count) }}</span>
+						<span class="aliyun-resource__value" :class="{ 'aliyun-resource__value--status': resourceStatusText(account, 'server') }">{{ resourceStatusText(account, 'server') || formatCount(account.server_count) }}</span>
 					</div>
 					<div class="aliyun-resource">
 						<span class="aliyun-resource__unit">{{ pub.lang('域名') }}</span>
-						<span class="aliyun-resource__value">{{ formatCount(account.domain_count) }}</span>
+						<span class="aliyun-resource__value" :class="{ 'aliyun-resource__value--status': resourceStatusText(account, 'domain') }">{{ resourceStatusText(account, 'domain') || formatCount(account.domain_count) }}</span>
 					</div>
 					<div class="aliyun-resource">
 						<span class="aliyun-resource__unit">ESA</span>
-						<span class="aliyun-resource__value">{{ formatCount(account.esa_count) }}</span>
+						<span class="aliyun-resource__value" :class="{ 'aliyun-resource__value--status': resourceStatusText(account, 'esa') }">{{ resourceStatusText(account, 'esa') || formatCount(account.esa_count) }}</span>
 					</div>
 					<div class="aliyun-resource">
 						<span class="aliyun-resource__unit">CDN</span>
-						<span class="aliyun-resource__value aliyun-resource__value--status" v-if="account.cdn_status === 'not_opened'">{{ pub.lang('未开通') }}</span>
-						<span v-else class="aliyun-resource__value">{{ formatCount(account.cdn_count) }}</span>
-					</div>
-				</div>
-				<div class="aliyun-card__footer">
-					<div class="aliyun-card__meta">
-						<span class="aliyun-card__group">{{ getGroupName(account.group_id) }}</span>
-						<el-tooltip v-if="account.resource_error" :content="account.resource_error" placement="top">
-							<span class="aliyun-card__error">{{ pub.lang('部分数据获取失败') }}</span>
-						</el-tooltip>
-						<span v-else>{{ formatRefreshTime(account.resource_refresh_time) }}</span>
+						<span class="aliyun-resource__value" :class="{ 'aliyun-resource__value--status': resourceStatusText(account, 'cdn') }">{{ resourceStatusText(account, 'cdn') || formatCount(account.cdn_count) }}</span>
 					</div>
 				</div>
 			</el-card>
@@ -164,7 +177,12 @@
 						:placeholder="pub.lang('例如：生产环境')" />
 				</el-form-item>
 				<el-form-item :label="pub.lang('AccessKey ID')" prop="access_key_id">
-					<el-input v-model="accountForm.access_key_id" autocomplete="off" placeholder="LTAI..." />
+					<el-input
+						v-model="accountForm.access_key_id"
+						type="password"
+						show-password
+						autocomplete="off"
+						placeholder="LTAI..." />
 				</el-form-item>
 				<el-form-item :label="pub.lang('AccessKey Secret')" prop="access_key_secret">
 					<el-input
@@ -261,7 +279,11 @@ interface AliyunAccount {
 	balance_currency: string
 	resource_refresh_time: number
 	resource_error: string
+	resource_status: ResourceStatus
 }
+
+type ResourceStatusKey = 'balance' | 'server' | 'domain' | 'esa' | 'cdn' | 'oss'
+type ResourceStatus = Partial<Record<ResourceStatusKey, string>>
 
 type SortMode = 'default' | 'latest' | 'earliest'
 
@@ -338,8 +360,27 @@ const groupDialogVisible = ref(false)
 const newGroupName = ref('')
 const refreshingAccounts = reactive(new Set<number>())
 const refreshingAll = ref(false)
+const draggedAccountId = ref<number | null>(null)
+let dragOrderChanged = false
+let dragMoveFrame: number | null = null
+let pendingDragMove: {
+	targetId: number
+	clientX: number
+	clientY: number
+	targetElement: HTMLElement
+} | null = null
+let lastAccountMove = { from: -1, to: -1, time: 0 }
+let dragAnimations: Animation[] = []
 
 const accountGroupOptions = computed(() => groupList.value.filter(group => group.group_id !== -1))
+const canDragSort = computed(
+	() => sortMode.value === 'default' && searchKeyword.value.trim() === ''
+)
+const dragHandleTitle = computed(() => {
+	if (sortMode.value !== 'default') return pub.lang('切换到默认排序后可拖动')
+	if (searchKeyword.value.trim()) return pub.lang('清空搜索后可拖动')
+	return pub.lang('拖动排序')
+})
 const filteredAccounts = computed(() => {
 	const keyword = searchKeyword.value.trim().toLowerCase()
 	let list = accountList.value.filter(account => {
@@ -373,6 +414,138 @@ const getAccountList = async () => {
 }
 
 const openAccountDetail = (account: AliyunAccount) => router.push(`/aliyun/${account.account_id}`)
+
+const getVisibleAccountRects = () => {
+	const positions = new Map<string, DOMRect>()
+	document.querySelectorAll<HTMLElement>('.aliyun-grid > .aliyun-card').forEach(card => {
+		positions.set(card.dataset.accountId || '', card.getBoundingClientRect())
+	})
+	return positions
+}
+
+const animateAccountDrag = async (previousPositions: Map<string, DOMRect>) => {
+	await nextTick()
+	dragAnimations.forEach(animation => animation.cancel())
+	dragAnimations = []
+	document.querySelectorAll<HTMLElement>('.aliyun-grid > .aliyun-card').forEach(card => {
+		const previousRect = previousPositions.get(card.dataset.accountId || '')
+		if (!previousRect) return
+		const currentRect = card.getBoundingClientRect()
+		const offsetX = previousRect.left - currentRect.left
+		const offsetY = previousRect.top - currentRect.top
+		if (!offsetX && !offsetY) return
+		dragAnimations.push(
+			card.animate(
+				[
+					{ transform: `translate3d(${offsetX}px, ${offsetY}px, 0)` },
+					{ transform: 'translate3d(0, 0, 0)' },
+				],
+				{ duration: 160, easing: 'cubic-bezier(0.2, 0, 0, 1)' }
+			)
+		)
+	})
+}
+
+const startAccountDrag = (accountId: number, event: DragEvent) => {
+	if (!canDragSort.value) {
+		event.preventDefault()
+		return
+	}
+	draggedAccountId.value = accountId
+	dragOrderChanged = false
+	if (!event.dataTransfer) return
+	event.dataTransfer.effectAllowed = 'move'
+	event.dataTransfer.setData('text/plain', String(accountId))
+	const card = (event.currentTarget as HTMLElement).closest('.aliyun-card') as HTMLElement | null
+	if (!card) return
+	const rect = card.getBoundingClientRect()
+	event.dataTransfer.setDragImage(
+		card,
+		Math.max(0, event.clientX - rect.left),
+		Math.max(0, event.clientY - rect.top)
+	)
+}
+
+const queueAccountMove = (targetId: number, event: DragEvent) => {
+	if (!canDragSort.value || draggedAccountId.value === null) return
+	pendingDragMove = {
+		targetId,
+		clientX: event.clientX,
+		clientY: event.clientY,
+		targetElement: event.currentTarget as HTMLElement,
+	}
+	if (dragMoveFrame !== null) return
+	dragMoveFrame = requestAnimationFrame(() => {
+		const move = pendingDragMove
+		dragMoveFrame = null
+		pendingDragMove = null
+		if (move) moveAccount(move)
+	})
+}
+
+const moveAccount = ({ targetId, clientX, clientY, targetElement }: NonNullable<typeof pendingDragMove>) => {
+	if (!canDragSort.value || draggedAccountId.value === null || targetId === draggedAccountId.value) return
+	const visibleAccounts = filteredAccounts.value
+	const currentIndex = visibleAccounts.findIndex(item => item.account_id === draggedAccountId.value)
+	const targetIndex = visibleAccounts.findIndex(item => item.account_id === targetId)
+	if (currentIndex < 0 || targetIndex < 0 || currentIndex === targetIndex) return
+
+	const now = performance.now()
+	if (
+		now - lastAccountMove.time < 180 &&
+		currentIndex === lastAccountMove.to &&
+		targetIndex === lastAccountMove.from
+	) return
+
+	const targetRect = targetElement.getBoundingClientRect()
+	const draggedElement = document.querySelector('.aliyun-card--dragging') as HTMLElement | null
+	const draggedRect = draggedElement?.getBoundingClientRect()
+	const isSameRow = draggedRect
+		? Math.abs(targetRect.top - draggedRect.top) < Math.min(targetRect.height, draggedRect.height) / 2
+		: true
+	const pointerPosition = isSameRow ? clientX : clientY
+	const targetMiddle = isSameRow
+		? targetRect.left + targetRect.width / 2
+		: targetRect.top + targetRect.height / 2
+	const isMovingForward = currentIndex < targetIndex
+	if (
+		(isMovingForward && pointerPosition < targetMiddle) ||
+		(!isMovingForward && pointerPosition > targetMiddle)
+	) return
+
+	const previousPositions = getVisibleAccountRects()
+	const reorderedAccounts = [...visibleAccounts]
+	const [draggedAccount] = reorderedAccounts.splice(currentIndex, 1)
+	reorderedAccounts.splice(targetIndex, 0, draggedAccount)
+	const visibleIds = new Set(reorderedAccounts.map(item => item.account_id))
+	let reorderedIndex = 0
+	accountList.value = accountList.value.map(account =>
+		visibleIds.has(account.account_id) ? reorderedAccounts[reorderedIndex++] : account
+	)
+	void animateAccountDrag(previousPositions)
+	dragOrderChanged = true
+	lastAccountMove = { from: currentIndex, to: targetIndex, time: now }
+}
+
+const finishAccountDrag = async () => {
+	const finalMove = pendingDragMove
+	if (dragMoveFrame !== null) {
+		cancelAnimationFrame(dragMoveFrame)
+		dragMoveFrame = null
+	}
+	pendingDragMove = null
+	if (finalMove) moveAccount(finalMove)
+	const shouldSave = dragOrderChanged
+	dragOrderChanged = false
+	lastAccountMove = { from: -1, to: -1, time: 0 }
+	draggedAccountId.value = null
+	if (shouldSave) {
+		const result = await request(routes.aliyun.set_sort.path, {
+			account_ids: accountList.value.map(account => account.account_id),
+		})
+		if (!result?.status) Message.request(result)
+	}
+}
 
 const refreshAccount = async (account: AliyunAccount, force: boolean) => {
 	if (refreshingAccounts.has(account.account_id)) return
@@ -441,8 +614,8 @@ const saveAccount = async () => {
 }
 
 const handleAccountCommand = (command: string, account: AliyunAccount) => {
-	if (command === 'refresh') refreshAccount(account, true)
 	if (command === 'edit') openAccountDialog(account)
+	if (command === 'refresh') refreshAccount(account, true)
 	if (command === 'remove') removeAccount(account)
 }
 
@@ -525,10 +698,24 @@ const formatRefreshTime = (time: number) => {
 }
 
 const formatCount = (count: number) => (Number(count) >= 0 ? Number(count) : '--')
-const getGroupName = (groupId: number) => {
-	return groupList.value.find(group => group.group_id === groupId)?.group_name || pub.lang('默认')
+const resourceStatusText = (account: AliyunAccount, key: ResourceStatusKey) => {
+	const currentStatus = account.resource_status?.[key]
+	const status = key === 'cdn' && (!currentStatus || currentStatus === 'unknown') ? account.cdn_status : currentStatus
+	return ({
+		not_opened: pub.lang('未开通'),
+		disabled: pub.lang('已停用'),
+		overdue: pub.lang('已欠费'),
+		permission_denied: pub.lang('无权限'),
+		invalid_credentials: pub.lang('密钥无效'),
+		rate_limited: pub.lang('已限流'),
+		quota_exceeded: pub.lang('配额不足'),
+		unavailable: pub.lang('服务异常'),
+		partial: pub.lang('部分获取'),
+		timeout: pub.lang('超时'),
+		network: pub.lang('网络异常'),
+		error: pub.lang('获取失败'),
+	} as Record<string, string>)[String(status || '')] || ''
 }
-
 const refreshCurrentPage = () => refreshAllAccounts()
 const handleRefreshShortcut = (event: KeyboardEvent) => {
 	if (
@@ -553,6 +740,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
 	window.removeEventListener('keydown', handleRefreshShortcut, true)
 	ipc.removeListener('aliyun-refresh', handleIpcRefresh)
+	if (dragMoveFrame !== null) cancelAnimationFrame(dragMoveFrame)
+	dragAnimations.forEach(animation => animation.cancel())
 })
 </script>
 
@@ -577,7 +766,6 @@ onBeforeUnmount(() => {
 .aliyun-card__header,
 .aliyun-card__identity,
 .aliyun-resource-list,
-.aliyun-card__footer,
 .aliyun-group-add,
 .aliyun-group-item {
 	display: flex;
@@ -740,6 +928,11 @@ onBeforeUnmount(() => {
 .aliyun-card {
 	border-radius: 0.8rem;
 	cursor: pointer;
+	transition: border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+
+	&--dragging {
+		opacity: 0.25;
+	}
 
 	:deep(.el-card__header) {
 		padding: 1.25rem 1.5rem;
@@ -751,18 +944,32 @@ onBeforeUnmount(() => {
 	}
 }
 
-.aliyun-card__error {
-	color: var(--el-color-danger);
-}
-
 .aliyun-card__header {
+	width: 100%;
 	justify-content: space-between;
 	gap: 1rem;
 }
 
 .aliyun-card__identity {
 	min-width: 0;
+	flex: 1;
 	gap: 1rem;
+}
+
+.aliyun-card__drag-handle {
+	display: inline-flex;
+	align-items: center;
+	flex: 0 0 auto;
+	cursor: grab;
+
+	&:active {
+		cursor: grabbing;
+	}
+
+	&--disabled {
+		cursor: not-allowed;
+		opacity: 0.45;
+	}
 }
 
 .aliyun-card__logo {
@@ -788,9 +995,14 @@ onBeforeUnmount(() => {
 }
 
 .aliyun-card__more {
+	flex: 0 0 auto;
 	width: 3rem;
 	height: 3rem;
 	padding: 0;
+	border: 1px solid var(--el-border-color);
+	border-radius: 0.5rem;
+	background: transparent;
+	color: var(--el-text-color-regular);
 }
 
 .aliyun-balance {
@@ -803,6 +1015,28 @@ onBeforeUnmount(() => {
 		margin-top: 0.15rem;
 		color: var(--el-text-color-secondary);
 		font-size: 1.25rem;
+		white-space: nowrap;
+
+		small {
+			margin-left: 0.6rem;
+			color: var(--el-text-color-placeholder);
+			font-size: 1.1rem;
+		}
+
+		em {
+			margin-left: 0.55rem;
+			color: var(--el-color-warning);
+			font-size: 1.1rem;
+			font-style: normal;
+		}
+	}
+
+	.aliyun-balance__refresh {
+		width: 2.2rem;
+		height: 2.2rem;
+		margin-left: 0.15rem;
+		padding: 0;
+		vertical-align: middle;
 	}
 
 	strong {
@@ -822,10 +1056,11 @@ onBeforeUnmount(() => {
 }
 
 .aliyun-resource {
-	display: flex;
-	align-items: flex-start;
+	display: grid;
+	grid-template-columns: 4.2rem minmax(0, 1fr);
+	align-items: center;
 	min-width: 0;
-	flex-direction: column;
+	column-gap: 0.8rem;
 
 	.aliyun-resource__unit {
 		margin: 0;
@@ -833,7 +1068,7 @@ onBeforeUnmount(() => {
 	}
 
 	.aliyun-resource__value {
-		margin-top: 0.15rem;
+		margin: 0;
 		font-size: 1.65rem;
 	}
 }
@@ -854,25 +1089,6 @@ onBeforeUnmount(() => {
 	margin-left: 0.4rem;
 	color: var(--el-text-color-secondary);
 	font-size: 1.2rem;
-}
-
-.aliyun-card__footer {
-	min-height: 2.4rem;
-	padding-top: 0.8rem;
-	border-top: 1px solid var(--el-border-color-lighter);
-	color: var(--el-text-color-placeholder);
-	font-size: 1.1rem;
-}
-
-.aliyun-card__meta {
-	display: flex;
-	align-items: center;
-	min-width: 0;
-	gap: 1.2rem;
-}
-
-.aliyun-card__group {
-	color: var(--el-text-color-secondary);
 }
 
 .aliyun-group-add {

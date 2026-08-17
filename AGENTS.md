@@ -18,49 +18,34 @@ npm run dev
 - 重启前确认旧的 Electron/Vite 进程已退出，避免新代码仍由旧主进程加载。
 - 开发版只用于功能验收，不以开发版数据库作为安装包数据。
 
-## 打包前的必要操作
+## 打包缓存与依赖准备
 
-1. 先检查 `node_modules` 和 Electron 运行时。依赖完整且 `package.json` 未变更时，不要例行执行 `npm ci`；它会先删除可用依赖，再重新下载 Electron 和 GitHub 依赖，容易受代理阻断。
-   只有依赖缺失或依赖声明变更时才重新安装。需要下载 Electron 时优先使用 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`；已有本机缓存时先校验 SHA256 并复用缓存。
-   不要使用 `--ignore-scripts`；部分原生依赖（如 `cpu-features`）需要在安装时生成自身的构建文件。
-2. 执行 `npm run clean`，避免沿用上次的 `frontend/dist`、加密产物或 `out/`。
-3. 针对当前 Electron 版本重编译原生依赖：
-
-   ```bash
-   npx electron-rebuild -f --only better-sqlite3,node-pty
-   ```
-
-   不要使用不带 `--only` 的全量重编译，避免把 SSH 等无关依赖的构建问题带入打包。`electron-builder` 打包时可能仍会自动检查其他原生依赖，这不代表业务代码失败。
-
-4. 重新构建前端并执行生产加密：
-
-   ```bash
-   npm run build-frontend
-   npm run encrypt
-   ```
-
-5. 阿里云 ECS 终端依赖必须先下载并校验对应平台的 CLI：
-
-   ```bash
-   npm run download-aliyun-cli
-   ```
-
-   指定其他平台时使用 `--target=darwin-arm64`、`--target=darwin-x64`、`--target=win32-x64` 或 `--target=linux-arm64`。不支持的架构不要强行打包。
+- macOS 默认打包入口已经内置资源准备，不要在每次打包前例行执行 `npm run clean`、`npm run build-frontend`、`npm run encrypt` 或 `electron-rebuild`，否则会主动破坏缓存并重复耗时。
+- `npm run prepare-package` 会校验阿里云 CLI，并同时检查以下输入指纹和实际产物哈希：
+  - Electron 版本、目标平台/架构、`better-sqlite3`、`node-pty`、`cpu-features` 与 `@electron/rebuild` 版本；
+  - 前端源码与 `public/dist`；
+  - Electron 主进程源码、加密工具版本与 `public/electron`。
+- 只有输入变化、产物缺失或产物哈希不一致时才重编原生依赖、重建前端或重新加密。缓存记录位于 `node_modules/.cache/bt-client/package-build-state.json`，不得打进安装包，也不要无故删除。
+- Electron Builder 在 macOS 缓存打包入口中使用 `npmRebuild=false`，因为原生依赖已由准备脚本按目标架构校验；不要绕过 `prepare-package` 后直接复用此选项。
+- 需要强制刷新全部构建资源时使用 `npm run build-m-full`。该命令会清理加密产物并忽略构建缓存，适用于正式发布、Electron 或构建工具升级、缓存异常排查，不用于普通重复打包。
+- 依赖完整且 `package.json` 未变更时，不要例行执行 `npm ci`；它会先删除可用依赖，再重新下载 Electron 和 GitHub 依赖，容易受代理阻断。只有依赖缺失或依赖声明变更时才重新安装。
+- 需要下载 Electron 时优先使用 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`；已有本机缓存时先校验 SHA256 并复用缓存。不要使用 `--ignore-scripts`，部分原生依赖（如 `cpu-features`）需要在安装时生成自身的构建文件。
+- 不支持的 CLI 平台或架构不要强行打包；跨平台打包应在对应目标系统执行，不能复用当前系统的原生依赖缓存。
 
 ## 正式打包
 
-- 默认打包当前环境：在 macOS 使用 `npm run build-m`，Windows 使用 `npm run build-w`，Linux 使用 `npm run build-l`。
+- 默认打包当前环境：在 macOS 使用缓存感知的 `npm run build-m`，Windows 使用 `npm run build-w`，Linux 使用 `npm run build-l`。
+- macOS 正式发布或明确要求全量打包时使用 `npm run build-m-full`；普通安装包验收和连续修改后的重复出包使用 `npm run build-m`。
 - macOS 默认只生成 DMG 安装包，不生成 ZIP 和 ZIP blockmap；用户明确要求时才额外压缩。
-- 不要默认使用只打包、不重建前端的架构脚本（如 `build-m-arm64` 、`build-w-64` 、`build-l-64`），避免安装包内仍是旧界面。
-- 需要指定平台时，先完成上述清理、前端构建、加密和原生依赖重建，再执行对应的 `electron-builder` 命令。
+- `build-m-arm64` 也必须先通过 `prepare-package`，不得改回只打包、不检查前端和主进程产物的旧流程。
+- Windows 和 Linux 尚未接入当前 macOS 缓存打包入口；在对应系统打包时仍按各自脚本执行原生依赖和资源检查。
 - 打包产物在 `out/`，交付前检查文件名中的系统、版本和架构。
 
 ## 签名与公证
 
 - 当前没有配置发布证书和 Apple 公证凭据，不要伪造签名或公证。打包时跳过签名和 notarization，并在交付说明中标注“未签名/未公证”。
-- macOS 打包前如发现 `afterSign` 指向不存在或不可用的公证脚本，应使用临时 builder 配置去掉 `afterSign`，不要因此临时新增虚假凭据。
-- 有签名凭据后才能执行公证；没有凭据时不要将公证失败误报为代码或功能失败。
-- 临时配置只能用于本次打包，打包后立即删除，不要修改仓库正式 `builder.json`。
+- 当前 `builder.json` 已禁用签名且不配置 `afterSign`，打包时不再生成临时配置。有签名凭据后才能恢复签名和公证，并应同步更新本约定。
+- 没有凭据时不要将签名或公证缺失误报为代码、功能或打包失败。
 
 ## 安装包交付前检查
 

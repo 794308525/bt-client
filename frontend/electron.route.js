@@ -343,6 +343,34 @@ const routes = {
 				},
 			},
 		},
+		reconnect: {
+			title: '手动重连单个面板',
+			method: 'ipc',
+			path: 'controller.panel.reconnect',
+			args: {
+				channel: {
+					type: 'string',
+					required: true,
+					description: '通道标识',
+				},
+				data: {
+					panel_id: {
+						type: 'number',
+						required: true,
+						description: '需要重连的面板ID',
+					},
+				},
+			},
+			result: {
+				type: 'object',
+				format: {
+					panel_id: 'number',
+					device_status: 'string',
+					panel_status: 'string',
+					data: 'object',
+				},
+			},
+		},
 		get_tmp_token: {
 			title: '获取临时登录地址',
 			method: 'ipc',
@@ -596,10 +624,30 @@ const routes = {
 
 	},
 	aliyun: {
+		cache_info: {
+			title: '获取阿里云 URL 分析缓存信息',
+			method: 'ipc',
+			path: 'controller.aliyun.cache_info',
+		},
+		cache_set_limit: {
+			title: '设置阿里云 URL 分析缓存上限',
+			method: 'ipc',
+			path: 'controller.aliyun.cache_set_limit',
+		},
+		cache_clear: {
+			title: '清理阿里云 URL 分析缓存',
+			method: 'ipc',
+			path: 'controller.aliyun.cache_clear',
+		},
 		list: {
 			title: '获取阿里云账号列表',
 			method: 'ipc',
 			path: 'controller.aliyun.list',
+		},
+		set_sort: {
+			title: '保存阿里云账号默认排序',
+			method: 'ipc',
+			path: 'controller.aliyun.set_sort',
 		},
 		find: {
 			title: '获取阿里云账号详情',
@@ -681,6 +729,16 @@ const routes = {
 			method: 'ipc',
 			path: 'controller.aliyun.esa_certificate_list',
 		},
+		esa_traffic_analytics: {
+			title: '获取阿里云 ESA 流量分析',
+			method: 'ipc',
+			path: 'controller.aliyun.esa_traffic_analytics',
+		},
+		esa_url_rankings: {
+			title: '按域名获取阿里云 ESA URL 排行',
+			method: 'ipc',
+			path: 'controller.aliyun.esa_url_rankings',
+		},
 		cdn_domain_list: {
 			title: '获取阿里云 CDN 域名列表',
 			method: 'ipc',
@@ -705,6 +763,11 @@ const routes = {
 			title: '获取阿里云 CDN 操作记录',
 			method: 'ipc',
 			path: 'controller.aliyun.cdn_operation_logs',
+		},
+		cdn_traffic_analytics: {
+			title: '获取阿里云 CDN 流量分析',
+			method: 'ipc',
+			path: 'controller.aliyun.cdn_traffic_analytics',
 		},
 		oss_bucket_list: { title: '获取 OSS Bucket 列表', method: 'ipc', path: 'controller.aliyun.oss_bucket_list' },
 		oss_bucket_create: { title: '创建 OSS Bucket', method: 'ipc', path: 'controller.aliyun.oss_bucket_create' },

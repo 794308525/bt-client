@@ -15,7 +15,7 @@
 		</template>
 		<template #url>
 			<el-input v-model="formValue.url" :placeholder="pub.lang('例：https://192.168.1.2:8888')" />
-			<span class="text-red-500 text-[1rem] leading-[1rem] mt-1">
+			<span v-if="formValue.auth_type === 2" class="text-red-500 text-[1rem] leading-[1rem] mt-1">
 				{{ pub.lang('*请务必确保您已正确配置面板【IP白名单】，否则面板将无法直接接管') }}
 			</span>
 		</template>
@@ -165,7 +165,7 @@ const formOptions = ref<FormItemOption[]>([
 	},
 ])
 const computed_form_options = computed(() => {
-	if (formValue.value.auth_type === 3) {
+	if (formValue.value.auth_type === 3 && !isEdit.value) {
 		return formOptions.value.filter(item => item.key !== 'url')
 	}
 	return formOptions.value

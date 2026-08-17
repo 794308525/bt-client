@@ -60,6 +60,24 @@
 				</el-select>
 			</el-form-item>
 		</el-form>
+		<h1 class="mt-[4rem]">{{ pub.lang('阿里云缓存') }}</h1>
+		<el-divider></el-divider>
+		<div class="aliyun-cache">
+			<div class="aliyun-cache__summary">
+				<div><span>{{ pub.lang('当前占用') }}</span><strong>{{ formatBytes(cacheInfo.used_bytes) }} / {{ cacheInfo.max_mb }} MB</strong></div>
+				<div><span>{{ pub.lang('缓存条目') }}</span><strong>{{ cacheInfo.entries }} {{ pub.lang('条') }}</strong></div>
+				<div><span>{{ pub.lang('保留时间') }}</span><strong>{{ cacheInfo.retention_days }} {{ pub.lang('天') }}</strong></div>
+			</div>
+			<el-progress :percentage="cacheUsagePercentage" :show-text="false" :stroke-width="8" />
+			<div class="aliyun-cache__actions">
+				<span>{{ pub.lang('容量上限') }}</span>
+				<el-input-number v-model="cacheLimitMb" :min="20" :max="2048" :step="50" :precision="0" controls-position="right" />
+				<span>MB</span>
+				<el-button :loading="cacheSaving" @click="saveCacheLimit">{{ pub.lang('保存') }}</el-button>
+				<el-button type="danger" plain :loading="cacheClearing" :disabled="!cacheInfo.entries" @click="clearAliyunCache">{{ pub.lang('清理缓存') }}</el-button>
+			</div>
+			<p>{{ pub.lang('仅缓存 ESA 热门 URL 和 URL 用量的聚合结果，不保存原始日志、下载地址或 AccessKey。超过 7 天或容量上限时自动删除最旧数据。') }}</p>
+		</div>
 		<h1 class="mt-[4rem]">{{ pub.lang('代理池') }}</h1>
 		<el-divider></el-divider>
 		<el-button type="primary" size="large" @click="handleAddProxy" class="mb-[2rem]">{{
@@ -132,6 +150,11 @@ const notpwRef = ref()
 const syncpwRef = ref()
 const panelInfo = ref({})
 const proxyList = ref([])
+const cacheSaving = ref(false)
+const cacheClearing = ref(false)
+const cacheLimitMb = ref(100)
+const cacheInfo = reactive({ entries: 0, used_bytes: 0, max_bytes: 100 * 1024 * 1024, max_mb: 100, retention_days: 7 })
+const cacheUsagePercentage = computed(() => cacheInfo.max_bytes ? Math.min(100, Math.round(cacheInfo.used_bytes / cacheInfo.max_bytes * 100)) : 0)
 const configData: {
 	sync_cloud: boolean
 	exit_action: string
@@ -210,6 +233,44 @@ const setConfig = async (key: string, value: any) => {
 	return await common.sendAsync({ route: routes.index.set_config.path, data: { key, value } })
 }
 
+const applyCacheInfo = (data: any) => {
+	Object.assign(cacheInfo, data || {})
+	cacheLimitMb.value = cacheInfo.max_mb || 100
+}
+const getCacheInfo = async () => {
+	const result: any = await common.sendAsync({ route: routes.aliyun.cache_info.path, data: {} })
+	if (result?.status) applyCacheInfo(result.data)
+}
+const saveCacheLimit = async () => {
+	cacheSaving.value = true
+	try {
+		const result: any = await common.sendAsync({ route: routes.aliyun.cache_set_limit.path, data: { max_mb: cacheLimitMb.value } })
+		Message.request(result)
+		if (result?.status) applyCacheInfo(result.data)
+	} finally { cacheSaving.value = false }
+}
+const clearAliyunCache = async () => {
+	try {
+		await ElMessageBox.confirm(pub.lang('确认清理全部阿里云 URL 分析缓存？账号和业务数据不会受到影响。'), pub.lang('清理缓存'), {
+			confirmButtonText: pub.lang('确认'),
+			cancelButtonText: pub.lang('取消'),
+			type: 'warning',
+		})
+	} catch (_error) { return }
+	cacheClearing.value = true
+	try {
+		const result: any = await common.sendAsync({ route: routes.aliyun.cache_clear.path, data: {} })
+		Message.request(result)
+		if (result?.status) applyCacheInfo(result.data)
+	} finally { cacheClearing.value = false }
+}
+const formatBytes = (value: number) => {
+	const bytes = Math.max(0, Number(value) || 0)
+	if (bytes < 1024) return `${bytes} B`
+	if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`
+	return `${(bytes / 1024 ** 2).toFixed(2)} MB`
+}
+
 // 获取代理列表
 const getProxyList = () => {
 	common.send(routes.proxy.getProxyList.path, {}, (result: any) => {
@@ -282,6 +343,7 @@ onMounted(async () => {
 	await useUStore.getBindUser()
 	// 获取代理列表
 	getProxyList()
+	getCacheInfo()
 
 	// 获取配置信息
 	getConfig()
@@ -289,6 +351,10 @@ onMounted(async () => {
 </script>
 
 <style scoped lang="scss">
+.aliyun-cache { width: min(72rem, 100%); padding: 1.4rem 1.6rem; border: 1px solid var(--el-border-color-lighter); border-radius: .8rem; background: var(--el-bg-color); }
+.aliyun-cache__summary { display: grid; margin-bottom: 1.2rem; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.2rem; div { display: flex; flex-direction: column; gap: .35rem; } span { color: var(--el-text-color-secondary); } strong { font-size: 1.2rem; font-weight: 600; } }
+.aliyun-cache__actions { display: flex; margin-top: 1.2rem; align-items: center; gap: .8rem; .el-input-number { width: 15rem; } }
+.aliyun-cache > p { margin: 1rem 0 0; color: var(--el-text-color-placeholder); font-size: 1rem; }
 // .setting-style {
 // :deep(.el-from) {
 // 	.el-form .el-form-item__label {

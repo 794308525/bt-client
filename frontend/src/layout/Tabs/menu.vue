@@ -48,12 +48,26 @@
 </template>
 
 <script setup lang="ts">
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { pub } from '@utils/tools'
 
+const route = useRoute()
 const router = useRouter()
+const lastAliyunPath = ref('/aliyun')
+
+watch(
+	() => route.fullPath,
+	path => {
+		if (route.path.startsWith('/aliyun')) lastAliyunPath.value = path
+	},
+	{ immediate: true }
+)
 
 const goTo = (path: string) => {
+	if (path === '/aliyun' && !route.path.startsWith('/aliyun')) {
+		router.push(lastAliyunPath.value)
+		return
+	}
 	router.push(path)
 }
 </script>
