@@ -65,6 +65,7 @@ class Sqlite {
             this.checkField('aliyun_account', 'resource_refresh_time', 'INTEGER', '0')
             this.checkField('aliyun_account', 'resource_error', 'TEXT', '""')
             this.checkField('aliyun_account', 'resource_error_detail', 'TEXT', '""')
+            this.checkField('aliyun_account', 'resource_status', 'TEXT', '"{}"')
             IS_CHECK_TABLE.status = true
         }
         
@@ -327,6 +328,7 @@ class Sqlite {
             \`resource_refresh_time\` INTEGER DEFAULT 0,       -- 资源统计刷新时间
             \`resource_error\` TEXT DEFAULT "",               -- 最近一次资源刷新错误
             \`resource_error_detail\` TEXT DEFAULT "",        -- 最近一次资源刷新详细错误
+            \`resource_status\` TEXT DEFAULT "{}",            -- 各阿里云产品最近一次探测状态 JSON
             \`sort\` INTEGER DEFAULT 0,                       -- 默认排序值
             \`addtime\` INTEGER DEFAULT 0,                    -- 添加时间
             \`update_time\` INTEGER DEFAULT 0                 -- 更新时间
@@ -344,6 +346,22 @@ class Sqlite {
         if (this.DB_OBJ.prepare(sql).run()){
             console.log('创建[aliyun_group]表成功')
         }
+
+        sql = `CREATE TABLE IF NOT EXISTS aliyun_esa_url_cache (
+            \`cache_id\` INTEGER PRIMARY KEY AUTOINCREMENT,   -- 缓存ID
+            \`cache_key\` TEXT NOT NULL UNIQUE,               -- 账号、站点、域名和时间范围组合键
+            \`account_id\` INTEGER DEFAULT 0,                 -- 阿里云账号ID
+            \`cache_data\` TEXT DEFAULT "{}",                 -- URL排行聚合结果，不包含原始日志和密钥
+            \`data_size\` INTEGER DEFAULT 0,                  -- UTF-8数据大小（字节）
+            \`update_time\` INTEGER DEFAULT 0                 -- 缓存更新时间
+        )`
+
+        if (this.DB_OBJ.prepare(sql).run()){
+            console.log('创建[aliyun_esa_url_cache]表成功')
+        }
+
+        this.DB_OBJ.prepare('CREATE INDEX IF NOT EXISTS idx_aliyun_esa_url_cache_time ON aliyun_esa_url_cache(update_time)').run()
+        this.DB_OBJ.prepare('CREATE INDEX IF NOT EXISTS idx_aliyun_esa_url_cache_account ON aliyun_esa_url_cache(account_id)').run()
 
         sql = `CREATE TABLE IF NOT EXISTS ssl_channel (
             \`channel_id\` INTEGER PRIMARY KEY AUTOINCREMENT,  -- 证书渠道ID

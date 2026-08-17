@@ -5,7 +5,6 @@
   "directories": {
     "output": "out"
   },
-  "afterSign": "build/notarization/notarize.js",
   "asar": true,
   "files": [
     "**/*",
@@ -40,6 +39,7 @@
   "mac": {
     "icon": "build/icons/icon.icns",
     "artifactName": "${productName}-${os}-${version}-${arch}.${ext}",
+    "identity": null,
     "darkModeSupport": true,
     "hardenedRuntime": true,
     "gatekeeperAssess":false

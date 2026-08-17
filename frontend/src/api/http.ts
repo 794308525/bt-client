@@ -7,6 +7,7 @@ interface AsyncProps {
 	route: string
 	data: any
 	timeout?: number
+	onProgress?: (data: any) => void
 }
 class IpcCommon {
 	private requestId = 0
@@ -33,18 +34,21 @@ class IpcCommon {
 	}
 
 	//异步发送
-	sendAsync({ route, data, timeout }: AsyncProps) {
+	sendAsync({ route, data, timeout, onProgress }: AsyncProps) {
 		return new Promise((resolve, reject) => {
 			const channel = `${route}:reply:${Date.now()}:${++this.requestId}`
 			let timer: ReturnType<typeof setTimeout> | null = null
 			const onResult = (event: any, result: any) => {
-				// console.log(channel, result, 'Async')
-				if (result) {
-					if (timer) clearTimeout(timer)
-					resolve(result)
+				if (!result) return
+				if (result.__ipc_progress === true) {
+					onProgress?.(result.data)
+					return
 				}
+				if (timer) clearTimeout(timer)
+				ipc.removeListener(channel, onResult)
+				resolve(result)
 			}
-			ipc.once(channel, onResult)
+			ipc.on(channel, onResult)
 			if (timeout && timeout > 0) {
 				timer = setTimeout(() => {
 					ipc.removeListener(channel, onResult)

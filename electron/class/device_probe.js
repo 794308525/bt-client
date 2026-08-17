@@ -41,6 +41,26 @@ class DeviceProbe {
         return this.states.get(key);
     }
 
+    /**
+     * 清除指定面板的探测缓存，供用户主动重连时立即重新检测。
+     */
+    reset(panel) {
+        const key = this.getKey(panel);
+        const state = this.states.get(key);
+        if (!state) return;
+        if (!state.inFlight) {
+            this.states.delete(key);
+            return;
+        }
+
+        // 已有探测仍在进行时提升版本；当前任务结束后会为主动重连重新发起一次真实探测。
+        state.version++;
+        state.status = 'unknown';
+        state.failures = 0;
+        state.nextProbeAt = 0;
+        state.callbacks = state.callbacks.filter((item) => item.version >= state.version);
+    }
+
     markReachable(panel) {
         const state = this.getState(panel);
         state.version++;

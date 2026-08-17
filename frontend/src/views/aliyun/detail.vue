@@ -13,6 +13,7 @@
 				<div class="balance-summary">
 					<div class="summary-item__amount">
 						<strong>{{ formatBalance(account?.balance, account?.balance_currency) }}</strong>
+						<span v-if="resourceStatusText('balance')" class="summary-item__status">{{ resourceStatusText('balance') }}</span>
 						<el-tooltip :content="pub.lang('刷新余额')" placement="top">
 							<el-button text circle :icon="Refresh" :loading="balanceRefreshing" @click="refreshBalance" />
 						</el-tooltip>
@@ -310,6 +311,9 @@
 							</header>
 
 							<el-tabs v-model="esaDetailTab" class="esa-detail-tabs" @tab-change="handleEsaDetailTabChange">
+								<el-tab-pane :label="pub.lang('流量分析')" name="analytics">
+									<TrafficAnalytics v-if="selectedEsaSite" :account-id="accountId" product="esa" :site-id="selectedEsaSite.site_id" />
+								</el-tab-pane>
 								<el-tab-pane :label="pub.lang('解析记录')" name="records">
 									<div class="esa-content-toolbar">
 										<div class="esa-record-filters">
@@ -431,7 +435,15 @@
 			</el-tab-pane>
 
 			<el-tab-pane name="cdn" class="cdn-pane">
-				<el-alert v-if="account?.cdn_status === 'not_opened'" type="info" :closable="false" class="resource-alert" :title="pub.lang('当前账号尚未开通 CDN 服务')" />
+				<el-alert v-if="resourceStatusText('cdn')" :type="resourceStatusAlertType(currentResourceStatus('cdn'))" :closable="false" class="resource-alert" :title="pub.lang('CDN 服务状态：{}', resourceStatusText('cdn'))" />
+				<div class="cdn-view-switch">
+					<el-radio-group v-model="cdnViewMode" size="small">
+						<el-radio-button label="analytics">{{ pub.lang('流量分析') }}</el-radio-button>
+						<el-radio-button label="domains">{{ pub.lang('域名管理') }}</el-radio-button>
+					</el-radio-group>
+				</div>
+				<TrafficAnalytics v-if="cdnViewMode === 'analytics'" class="cdn-analytics" :account-id="accountId" product="cdn" :domains="cdnDomainOptions" />
+				<template v-else>
 				<div class="resource-toolbar">
 					<div class="resource-toolbar__filters">
 						<el-input v-model="cdnQuery.keyword" clearable :prefix-icon="Search" :placeholder="pub.lang('搜索 CDN 域名')" @keydown.enter="loadCdnDomains(1)" />
@@ -473,6 +485,7 @@
 				</el-table>
 				</div>
 				<div class="pagination"><el-pagination v-model:current-page="cdnPage" :page-size="50" layout="total, prev, pager, next" :total="cdnTotal" @current-change="loadCdnDomains" /></div>
+				</template>
 			</el-tab-pane>
 
 			<el-tab-pane name="oss" class="oss-pane">
@@ -486,16 +499,88 @@
 						<el-button type="primary" :icon="Plus" @click="openOssBucketDialog">{{ pub.lang('创建 Bucket') }}</el-button>
 					</div>
 				</div>
-				<div class="oss-table-wrap">
-					<el-table :data="ossBuckets" v-loading="ossLoading" row-key="name" height="100%">
-						<el-table-column :label="pub.lang('Bucket')" min-width="190"><template #default="{ row }"><div class="instance-name">{{ row.name }}</div><div class="muted mono">{{ row.endpoint }}</div></template></el-table-column>
-						<el-table-column prop="region" :label="pub.lang('地域')" width="170" />
-						<el-table-column :label="pub.lang('文件数量')" width="110" align="right"><template #default="{ row }"><el-tooltip v-if="row.stat_error" :content="row.stat_error" placement="top"><span class="muted">--</span></el-tooltip><span v-else>{{ row.object_count.toLocaleString() }}</span></template></el-table-column>
-						<el-table-column :label="pub.lang('占用空间')" width="120" align="right"><template #default="{ row }"><el-tooltip v-if="row.stat_error" :content="row.stat_error" placement="top"><span class="muted">--</span></el-tooltip><span v-else>{{ formatBytes(row.storage_size) }}</span></template></el-table-column>
-						<el-table-column :label="pub.lang('存储类型')" width="110"><template #default="{ row }">{{ ossStorageClassName(row.storage_class) }}</template></el-table-column>
-						<el-table-column :label="pub.lang('创建时间')" width="180"><template #default="{ row }">{{ safeFormatDate(row.creation_time) }}</template></el-table-column>
-						<el-table-column :label="pub.lang('操作')" width="130" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openOssObjects(row)">{{ pub.lang('对象管理') }}</el-button><el-button link type="danger" @click="removeOssBucket(row)">{{ pub.lang('删除') }}</el-button></template></el-table-column>
-					</el-table>
+				<div v-loading="ossLoading" class="oss-bucket-scroll">
+					<el-empty v-if="!ossLoading && !ossBuckets.length" :description="pub.lang('暂无 Bucket')" />
+					<div v-else class="oss-bucket-grid">
+						<article
+							v-for="bucket in ossBuckets"
+							:key="bucket.name"
+							class="oss-bucket-card"
+							role="button"
+							tabindex="0"
+							@click="openOssObjects(bucket)"
+							@keydown.enter.self="openOssObjects(bucket)"
+							@keydown.space.self.prevent="openOssObjects(bucket)">
+							<div class="oss-bucket-card__header">
+								<div class="oss-bucket-card__identity">
+									<span class="oss-bucket-card__icon"><el-icon><FolderOpened /></el-icon></span>
+									<div>
+										<strong :title="bucket.name">{{ bucket.name }}</strong>
+										<span>{{ bucket.region }}</span>
+									</div>
+								</div>
+								<div class="oss-bucket-card__actions" @click.stop>
+									<el-popover trigger="click" placement="bottom-end" :width="360">
+										<template #reference>
+											<el-button text circle :icon="InfoFilled" :title="pub.lang('Bucket 详情')" />
+										</template>
+										<div class="oss-bucket-detail">
+											<div class="oss-bucket-detail__title">{{ bucket.name }}</div>
+											<dl>
+												<div class="oss-bucket-detail__endpoint">
+													<dt>Endpoint</dt>
+													<dd><code>{{ bucket.endpoint }}</code><el-button text circle :icon="CopyDocument" @click="copyOssEndpoint(bucket.endpoint)" /></dd>
+												</div>
+												<div><dt>{{ pub.lang('地域') }}</dt><dd>{{ bucket.region }}</dd></div>
+												<div><dt>{{ pub.lang('存储类型') }}</dt><dd>{{ ossStorageClassName(bucket.storage_class) }}</dd></div>
+												<div><dt>{{ pub.lang('创建时间') }}</dt><dd>{{ safeFormatDate(bucket.creation_time) }}</dd></div>
+												<div><dt>{{ pub.lang('流量口径') }}</dt><dd>{{ pub.lang('公网流出（云监控计量）') }}</dd></div>
+												<div><dt>{{ pub.lang('流量更新时间') }}</dt><dd>{{ bucket.traffic_update_time ? safeFormatDate(bucket.traffic_update_time * 1000) : '--' }}</dd></div>
+											</dl>
+											<p class="oss-bucket-detail__hint">{{ pub.lang('云监控计量数据通常会延迟数分钟。') }}</p>
+										</div>
+									</el-popover>
+									<el-dropdown trigger="click" @command="command => handleOssBucketCommand(command, bucket)">
+										<el-button text circle :icon="MoreFilled" />
+										<template #dropdown>
+											<el-dropdown-menu>
+												<el-dropdown-item command="delete">{{ pub.lang('删除 Bucket') }}</el-dropdown-item>
+											</el-dropdown-menu>
+										</template>
+									</el-dropdown>
+								</div>
+							</div>
+
+							<div class="oss-bucket-card__metrics">
+								<div>
+									<span>{{ pub.lang('文件数量') }}</span>
+									<el-tooltip v-if="bucket.stat_error" :content="bucket.stat_error" placement="top"><strong>--</strong></el-tooltip>
+									<strong v-else>{{ bucket.object_count === null ? '--' : bucket.object_count.toLocaleString() }}</strong>
+								</div>
+								<div>
+									<span>{{ pub.lang('占用空间') }}</span>
+									<el-tooltip v-if="bucket.stat_error" :content="bucket.stat_error" placement="top"><strong>--</strong></el-tooltip>
+									<strong v-else>{{ bucket.storage_size === null ? '--' : formatBytes(bucket.storage_size) }}</strong>
+								</div>
+							</div>
+							<div class="oss-bucket-card__traffic">
+								<div>
+									<span>{{ pub.lang('今日流量') }}</span>
+									<el-tooltip v-if="bucket.traffic_error" :content="bucket.traffic_error" placement="top"><strong>--</strong></el-tooltip>
+									<strong v-else>{{ bucket.today_traffic === null ? '--' : formatBytes(bucket.today_traffic) }}</strong>
+								</div>
+								<div>
+									<span>{{ pub.lang('昨日流量') }}</span>
+									<el-tooltip v-if="bucket.traffic_error" :content="bucket.traffic_error" placement="top"><strong>--</strong></el-tooltip>
+									<strong v-else>{{ bucket.yesterday_traffic === null ? '--' : formatBytes(bucket.yesterday_traffic) }}</strong>
+								</div>
+							</div>
+
+							<div class="oss-bucket-card__footer">
+								<span class="oss-bucket-card__enter">{{ pub.lang('进入对象管理') }} <el-icon><ArrowRight /></el-icon></span>
+							</div>
+						</article>
+					</div>
 				</div>
 				<div class="pagination"><el-pagination v-model:current-page="ossPage" :page-size="20" layout="total, prev, pager, next" :total="ossTotal" @current-change="loadOssBuckets" /></div>
 			</el-tab-pane>
@@ -606,7 +691,7 @@
 							<el-input-number v-model="source.port" :min="1" :max="65535" controls-position="right" />
 							<el-button type="danger" link :disabled="cdnDomainForm.sources.length === 1" @click="removeCdnSource(index)">{{ pub.lang('删除') }}</el-button>
 						</div>
-						<el-button plain :icon="Plus" @click="addCdnSource">{{ pub.lang('添加源站') }}</el-button>
+							<el-button plain :icon="Plus" @click="addCdnSource">{{ pub.lang('添加源站') }}</el-button>
 					</div>
 				</el-form-item>
 			</el-form>
@@ -671,13 +756,13 @@
 
 <script setup lang="ts">
 import { h } from 'vue'
-import { ArrowLeft, Clock, CopyDocument, Hide, Monitor, Plus, QuestionFilled, Refresh, Search, View } from '@element-plus/icons-vue'
-import { useStorage } from '@vueuse/core'
+import { ArrowLeft, ArrowRight, Clock, CopyDocument, FolderOpened, Hide, InfoFilled, Monitor, MoreFilled, Plus, QuestionFilled, Refresh, Search, View } from '@element-plus/icons-vue'
 import { ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { common, ipc, routes } from '@api/http'
 import { useMessage } from '@utils/hooks/message'
 import { copyText, pub } from '@utils/tools'
 import { useXtermBase } from '@store/xterm'
+import TrafficAnalytics from './components/traffic-analytics.vue'
 
 defineOptions({ name: 'AliyunDetail' })
 
@@ -697,7 +782,10 @@ interface AliyunAccount {
 	resource_refresh_time: number
 	resource_error: string
 	resource_error_detail: string
+	resource_status: ResourceStatus
 }
+type ResourceStatusKey = 'balance' | 'server' | 'domain' | 'esa' | 'cdn' | 'oss'
+type ResourceStatus = Partial<Record<ResourceStatusKey, string>>
 interface CloudServer {
 	source: 'ecs' | 'swas'
 	instance_id: string
@@ -740,7 +828,7 @@ interface EsaDeployTask { task_id: number; account_id: number; site_id: string; 
 interface CdnSource { type: string; content: string; port: number; priority: number; weight: number }
 interface CdnDomain { domain_id: string; domain_name: string; cname: string; cdn_type: string; coverage: string; status: string; access_status: string; access_error: string; ssl_enabled: boolean; description: string; sources: CdnSource[]; create_time: string; update_time: string }
 interface CdnOperationLog { event_id: string; event_name: string; event_time: string; domains: string[]; operator: string; access_key_id: string; source_ip: string; region_id: string; request_id: string; success: boolean; error_code: string; error_message: string }
-interface OssBucket { name: string; region: string; endpoint: string; creation_time: string; storage_class: string; object_count: number | null; storage_size: number | null; stat_error: string }
+interface OssBucket { name: string; region: string; endpoint: string; creation_time: string; storage_class: string; object_count: number | null; storage_size: number | null; stat_error: string; today_traffic: number | null; yesterday_traffic: number | null; traffic_error: string; traffic_update_time: number }
 
 const route = useRoute()
 const router = useRouter()
@@ -756,12 +844,31 @@ const balanceRefreshing = ref(false)
 const activeTab = ref(['servers', 'domains', 'esa', 'cdn', 'oss'].includes(String(route.query.tab)) ? String(route.query.tab) : 'servers')
 const resourceTabsRef = ref<HTMLElement>()
 const resourceIndicatorStyle = ref({ width: '0px', transform: 'translateX(0px)' })
+const currentResourceStatus = (key: ResourceStatusKey) => {
+	const currentStatus = account.value?.resource_status?.[key]
+	return key === 'cdn' && (!currentStatus || currentStatus === 'unknown') ? account.value?.cdn_status : currentStatus
+}
+const resourceStatusText = (key: ResourceStatusKey) => ({
+	not_opened: pub.lang('未开通'),
+	disabled: pub.lang('已停用'),
+	overdue: pub.lang('已欠费'),
+	permission_denied: pub.lang('无权限'),
+	invalid_credentials: pub.lang('密钥无效'),
+	rate_limited: pub.lang('已限流'),
+	quota_exceeded: pub.lang('配额不足'),
+	unavailable: pub.lang('服务异常'),
+	partial: pub.lang('部分获取'),
+	timeout: pub.lang('超时'),
+	network: pub.lang('网络异常'),
+	error: pub.lang('获取失败'),
+} as Record<string, string>)[String(currentResourceStatus(key) || '')] || ''
+const resourceStatusAlertType = (status?: string) => ['not_opened', 'permission_denied'].includes(String(status || '')) ? 'info' : 'warning'
 const resourceTabItems = computed(() => [
-	{ name: 'servers', label: pub.lang('服务器'), count: formatCount(account.value?.server_count), status: '' },
-	{ name: 'domains', label: pub.lang('域名解析'), count: formatCount(account.value?.domain_count), status: '' },
-	{ name: 'esa', label: 'ESA', count: formatCount(account.value?.esa_count), status: '' },
-	{ name: 'cdn', label: 'CDN', count: formatCount(account.value?.cdn_count), status: account.value?.cdn_status === 'not_opened' ? pub.lang('未开通') : '' },
-	{ name: 'oss', label: 'OSS', count: formatCount(account.value?.oss_count), status: '' },
+	{ name: 'servers', label: pub.lang('服务器'), count: formatCount(account.value?.server_count), status: resourceStatusText('server') },
+	{ name: 'domains', label: pub.lang('域名解析'), count: formatCount(account.value?.domain_count), status: resourceStatusText('domain') },
+	{ name: 'esa', label: 'ESA', count: formatCount(account.value?.esa_count), status: resourceStatusText('esa') },
+	{ name: 'cdn', label: 'CDN', count: formatCount(account.value?.cdn_count), status: resourceStatusText('cdn') },
+	{ name: 'oss', label: 'OSS', count: formatCount(account.value?.oss_count), status: resourceStatusText('oss') },
 ])
 const updateResourceIndicator = () => nextTick(() => {
 	const container = resourceTabsRef.value
@@ -782,7 +889,7 @@ const servers = ref<CloudServer[]>([])
 const serverLoading = ref(false)
 const serverLoaded = ref(false)
 const serverPartial = ref(false)
-const showServerIp = useStorage('aliyun-show-server-ip', true)
+const showServerIp = ref(false)
 const openingServerId = ref('')
 const serverPage = ref(1)
 const serverQuery = reactive({ keyword: '', source: 'all', region: 'all', status: 'all' })
@@ -869,7 +976,7 @@ const selectedEsaSite = ref<EsaSite>()
 const pendingEsaSiteId = ref('')
 const esaDetail = ref<EsaSiteDetail>()
 const esaDetailLoading = ref(false)
-const esaDetailTab = ref('records')
+const esaDetailTab = ref('analytics')
 const esaRecords = ref<EsaRecord[]>([])
 const esaRecordLoading = ref(false)
 const esaRecordLoaded = ref(false)
@@ -886,7 +993,7 @@ const esaEditableRecordTypes = ['A/AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SRV', 'CA
 const esaRecordDialogVisible = ref(false)
 const esaRecordSaving = ref(false)
 const esaRecordFormRef = ref<FormInstance>()
-const createEsaRecordForm = () => ({ record_id: '', record_name: '', type: 'A/AAAA', value: '', ttl: 300, proxied: false, priority: 10, weight: 0, port: 80, flag: 0, tag: 'issue', source_type: 'Domain', host_policy: 'follow_hostname', biz_name: 'web', comment: '' })
+const createEsaRecordForm = () => ({ record_id: '', record_name: '', type: 'A/AAAA', value: '', ttl: 1, proxied: false, priority: 10, weight: 0, port: 80, flag: 0, tag: 'issue', source_type: 'Domain', host_policy: 'follow_hostname', biz_name: 'web', comment: '' })
 const esaRecordForm = reactive(createEsaRecordForm())
 const esaOssBucket = ref('')
 const esaRecordProxySupported = computed(() => ['A/AAAA', 'CNAME'].includes(esaRecordForm.type))
@@ -1027,6 +1134,7 @@ const esaTlsSummary = computed(() => {
 })
 
 const cdnDomains = ref<CdnDomain[]>([])
+const cdnViewMode = ref<'analytics' | 'domains'>('analytics')
 const cdnLoading = ref(false)
 const cdnLoaded = ref(false)
 const cdnPage = ref(1)
@@ -1051,6 +1159,7 @@ const cdnOperationLogs = ref<CdnOperationLog[]>([])
 const cdnLogPage = ref(1)
 const cdnLogNextToken = ref('')
 const cdnLogTokens = ref<string[]>([''])
+const cdnDomainOptions = computed(() => cdnDomains.value.map(domain => domain.domain_name))
 
 const ossBuckets = ref<OssBucket[]>([])
 const ossCandidates = ref<OssBucket[]>([])
@@ -1078,6 +1187,14 @@ const loadAccount = async () => {
 		account.value = result.data
 	} finally { accountLoading.value = false }
 }
+const setResourceStatus = (key: ResourceStatusKey, status: string) => {
+	if (!account.value) return
+	account.value.resource_status ||= {}
+	account.value.resource_status[key] = status
+}
+const applyResourceErrorStatus = (key: ResourceStatusKey, result: any) => {
+	if (result?.data?.status) setResourceStatus(key, result.data.status)
+}
 const loadOssBuckets = async (page = ossPage.value, candidateOnly = false) => {
 	if (candidateOnly) ossCandidateLoading.value = true
 	else ossLoading.value = true
@@ -1089,7 +1206,11 @@ const loadOssBuckets = async (page = ossPage.value, candidateOnly = false) => {
 			keyword: candidateOnly ? '' : ossKeyword.value,
 			include_stat: !candidateOnly,
 		})
-		if (!result?.status) return Message.request(result)
+		if (!result?.status) {
+			applyResourceErrorStatus('oss', result)
+			return Message.request(result)
+		}
+		setResourceStatus('oss', 'active')
 		if (candidateOnly) ossCandidates.value = result.data.data || []
 		else {
 			ossPage.value = page
@@ -1146,6 +1267,10 @@ const removeOssBucket = async (bucket: OssBucket) => {
 	ossCandidates.value = []
 	await loadOssBuckets(Math.min(ossPage.value, Math.max(1, Math.ceil(Math.max(0, ossTotal.value - 1) / 20))))
 }
+const handleOssBucketCommand = (command: string, bucket: OssBucket) => {
+	if (command === 'delete') removeOssBucket(bucket)
+}
+const copyOssEndpoint = (endpoint: string) => copyText({ value: endpoint, success: pub.lang('Endpoint 复制成功') })
 const openOssObjects = (bucket: OssBucket) => {
 	router.push({
 		path: `/aliyun/${accountId}/oss/${encodeURIComponent(bucket.name)}`,
@@ -1165,10 +1290,14 @@ const refreshBalance = async () => {
 	balanceRefreshing.value = true
 	try {
 		const result = await request(routes.aliyun.refresh_balance.path, { account_id: accountId })
-		if (!result?.status) return Message.request(result)
+		if (!result?.status) {
+			applyResourceErrorStatus('balance', result)
+			return Message.request(result)
+		}
 		account.value.balance = result.data.balance
 		account.value.balance_currency = result.data.balance_currency
 		account.value.balance_refresh_time = result.data.balance_refresh_time
+		setResourceStatus('balance', 'active')
 		Message.success(pub.lang('余额已刷新'))
 	} finally { balanceRefreshing.value = false }
 }
@@ -1176,9 +1305,13 @@ const loadServers = async (force = false) => {
 	serverLoading.value = true
 	try {
 		const result = await request(routes.aliyun.server_list.path, { account_id: accountId, force })
-		if (!result?.status) return Message.request(result)
+		if (!result?.status) {
+			applyResourceErrorStatus('server', result)
+			return Message.request(result)
+		}
 		servers.value = result.data.data || []
 		serverPartial.value = !!result.data.partial
+		setResourceStatus('server', serverPartial.value ? 'partial' : 'active')
 		if (account.value && result.data.count_complete !== false) account.value.server_count = servers.value.length
 		serverLoaded.value = true
 	} finally { serverLoading.value = false }
@@ -1203,7 +1336,11 @@ const loadDomains = async (page = domainPage.value) => {
 	domainLoading.value = true
 	try {
 		const result = await request(routes.aliyun.domain_list.path, { account_id: accountId, page, page_size: 30, keyword: domainKeyword.value })
-		if (!result?.status) return Message.request(result)
+		if (!result?.status) {
+			applyResourceErrorStatus('domain', result)
+			return Message.request(result)
+		}
+		setResourceStatus('domain', 'active')
 		domains.value = result.data.data || []
 		domainTotal.value = result.data.total || 0
 		if (account.value && !domainKeyword.value.trim()) account.value.domain_count = domainTotal.value
@@ -1225,7 +1362,11 @@ const loadEsaSites = async (page = esaPage.value) => {
 			keyword: esaQuery.keyword,
 			status: esaQuery.status,
 		})
-		if (!result?.status) return Message.request(result)
+		if (!result?.status) {
+			applyResourceErrorStatus('esa', result)
+			return Message.request(result)
+		}
+		setResourceStatus('esa', 'active')
 		esaSites.value = result.data.data || []
 		esaTotal.value = result.data.total || 0
 		if (account.value && !esaQuery.keyword.trim() && (!esaQuery.status || esaQuery.status === 'all')) account.value.esa_count = esaTotal.value
@@ -1248,7 +1389,10 @@ const loadEsaSiteDetail = async (siteId = selectedEsaSite.value?.site_id) => {
 	esaDetailLoading.value = true
 	try {
 		const result = await request(routes.aliyun.esa_site_detail.path, { account_id: accountId, site_id: siteId })
-		if (!result?.status) return Message.request(result)
+		if (!result?.status) {
+			applyResourceErrorStatus('esa', result)
+			return Message.request(result)
+		}
 		if (selectedEsaSite.value?.site_id === siteId) esaDetail.value = result.data
 	} finally { esaDetailLoading.value = false }
 }
@@ -1388,7 +1532,7 @@ const retryEsaDeployTask = async (task: EsaDeployTask) => {
 const selectEsaSite = async (site: EsaSite) => {
 	selectedEsaSite.value = site
 	esaDetail.value = undefined
-	esaDetailTab.value = 'records'
+	esaDetailTab.value = 'analytics'
 	esaRecords.value = []
 	esaRecordKeyword.value = ''
 	esaRecordType.value = 'all'
@@ -1426,12 +1570,18 @@ const loadCdnDomains = async (page = cdnPage.value) => {
 			keyword: cdnQuery.keyword,
 			status: cdnQuery.status,
 		})
-		if (!result?.status) return Message.request(result)
+		if (!result?.status) {
+			applyResourceErrorStatus('cdn', result)
+			return Message.request(result)
+		}
 		cdnDomains.value = result.data.data || []
 		cdnTotal.value = result.data.total || 0
 		if (account.value) {
 			if (!cdnQuery.keyword.trim() && (!cdnQuery.status || cdnQuery.status === 'all')) account.value.cdn_count = cdnTotal.value
-			if (result.data.status) account.value.cdn_status = result.data.status
+			if (result.data.status) {
+				account.value.cdn_status = result.data.status
+				setResourceStatus('cdn', result.data.status)
+			}
 		}
 		cdnLoaded.value = true
 	} finally { cdnLoading.value = false }
@@ -1888,7 +2038,7 @@ const formatStorageSpec = (server: CloudServer) => {
 	return `${bandwidth} / ${disk}`
 }
 const ossStorageClassName = (value: string) => ({ Standard: pub.lang('标准存储'), IA: pub.lang('低频访问'), Archive: pub.lang('归档存储'), ColdArchive: pub.lang('冷归档'), DeepColdArchive: pub.lang('深度冷归档') }[value] || value || '--')
-const formatBytes = (size: number) => {
+const formatBytes = (size: number | null) => {
 	const value = Number(size || 0)
 	if (value < 1024) return `${value} B`
 	if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`
@@ -1921,23 +2071,37 @@ const handleRefreshShortcut = (event: KeyboardEvent) => {
 }
 const handleIpcRefresh = () => refreshCurrentPage()
 
-onMounted(async () => {
+const activatePageListeners = () => {
 	window.addEventListener('keydown', handleRefreshShortcut, true)
 	ipc.on('aliyun-refresh', handleIpcRefresh)
-	esaDeployPollingTimer.value = setInterval(() => {
-		if (activeTab.value === 'esa' && esaDetailTab.value === 'certificates' && esaDeployTasks.value.some(task => !['completed', 'failed'].includes(task.status))) {
-			loadEsaDeployTasks(true)
-		}
-	}, 30000)
-	await loadAccount()
-	await (activeTab.value === 'servers' ? loadServers() : handleTabChange(activeTab.value))
-	updateResourceIndicator()
-})
-onBeforeUnmount(() => {
+	if (!esaDeployPollingTimer.value) {
+		esaDeployPollingTimer.value = setInterval(() => {
+			if (activeTab.value === 'esa' && esaDetailTab.value === 'certificates' && esaDeployTasks.value.some(task => !['completed', 'failed'].includes(task.status))) {
+				loadEsaDeployTasks(true)
+			}
+		}, 30000)
+	}
+}
+const deactivatePageListeners = () => {
 	window.removeEventListener('keydown', handleRefreshShortcut, true)
 	ipc.removeListener('aliyun-refresh', handleIpcRefresh)
-	if (esaDeployPollingTimer.value) clearInterval(esaDeployPollingTimer.value)
+	if (esaDeployPollingTimer.value) {
+		clearInterval(esaDeployPollingTimer.value)
+		esaDeployPollingTimer.value = undefined
+	}
+}
+
+onMounted(async () => {
+	if (activeTab.value === 'servers') await Promise.all([loadAccount(), loadServers()])
+	else {
+		await loadAccount()
+		await handleTabChange(activeTab.value)
+	}
+	updateResourceIndicator()
 })
+onActivated(activatePageListeners)
+onDeactivated(deactivatePageListeners)
+onBeforeUnmount(deactivatePageListeners)
 </script>
 
 <style scoped lang="scss">
@@ -1956,6 +2120,7 @@ onBeforeUnmount(() => {
 .resource-alert { margin-top: 1.2rem; }
 .balance-summary { min-width: 15rem; }
 .summary-item__amount { display: flex; align-items: center; gap: .35rem; white-space: nowrap; strong { min-width: 0; color: #ff6a00; font-size: 2.25rem; font-weight: 650; letter-spacing: 0; } .el-button { flex: 0 0 auto; } }
+.summary-item__status { margin: 0 .2rem; color: var(--el-color-warning); font-size: 1.05rem; }
 .summary-item__updated { margin-top: .2rem; color: var(--el-text-color-secondary); font-size: 1.1rem; white-space: nowrap; }
 .resource-navigation { justify-content: space-between; gap: 2rem; margin-bottom: 1.6rem; padding: .7rem 0; border-top: 1px solid var(--el-border-color-lighter); border-bottom: 1px solid var(--el-border-color-lighter); }
 .resource-navigation__items { position: relative; gap: .2rem; padding: .3rem; border: 1px solid var(--el-border-color-light); border-radius: .8rem; background: var(--el-fill-color-lighter); }
@@ -1966,9 +2131,32 @@ onBeforeUnmount(() => {
 .server-pane { display: flex; height: calc(100vh - 23rem); min-height: 36rem; flex-direction: column; }
 .server-table-wrap { min-height: 0; flex: 1; }
 .cdn-pane { display: flex; height: calc(100vh - 23rem); min-height: 36rem; flex-direction: column; }
+.cdn-view-switch { display: flex; justify-content: flex-start; margin-bottom: 1rem; }
+.cdn-analytics { min-height: 0; overflow-y: auto; padding-right: .2rem; flex: 1; }
 .cdn-table-wrap { min-height: 0; flex: 1; }
 .oss-pane { display: flex; height: calc(100vh - 23rem); min-height: 36rem; flex-direction: column; }
-.oss-table-wrap { min-height: 0; flex: 1; }
+.oss-bucket-scroll { min-height: 0; overflow-y: auto; flex: 1; }
+.oss-bucket-grid { display: grid; padding: .2rem .2rem 1rem; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.2rem; }
+.oss-bucket-card { min-width: 0; padding: 1.5rem; border: 1px solid var(--el-border-color-lighter); border-radius: .8rem; background: var(--el-bg-color); cursor: pointer; transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease; &:hover, &:focus-visible { border-color: var(--el-color-primary-light-5); box-shadow: 0 .5rem 1.5rem rgba(31, 45, 61, .08); transform: translateY(-1px); outline: 0; } }
+.oss-bucket-card__header, .oss-bucket-card__identity, .oss-bucket-card__actions, .oss-bucket-card__metrics, .oss-bucket-card__traffic, .oss-bucket-card__footer, .oss-bucket-card__enter { display: flex; align-items: center; }
+.oss-bucket-card__header { min-width: 0; justify-content: space-between; gap: 1rem; }
+.oss-bucket-card__identity { min-width: 0; gap: 1rem; flex: 1; > div { min-width: 0; } strong, span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } strong { font-size: 1.4rem; font-weight: 650; } span { margin-top: .3rem; color: var(--el-text-color-secondary); font-size: 1.05rem; } }
+.oss-bucket-card__icon { display: flex !important; width: 3.8rem; height: 3.8rem; align-items: center; justify-content: center; margin: 0 !important; border-radius: .8rem; color: var(--el-color-primary); font-family: inherit !important; font-size: 1.8rem !important; background: var(--el-color-primary-light-9); flex: 0 0 auto; }
+.oss-bucket-card__actions { gap: .1rem; flex: 0 0 auto; }
+.oss-bucket-card__metrics { margin-top: 1.5rem; padding: 1.25rem 0; border-top: 1px solid var(--el-border-color-lighter); border-bottom: 1px solid var(--el-border-color-lighter); > div { min-width: 0; flex: 1; } > div + div { padding-left: 1.8rem; border-left: 1px solid var(--el-border-color-lighter); } span, strong { display: block; } span { color: var(--el-text-color-secondary); font-size: 1.05rem; } strong { margin-top: .35rem; font-size: 1.7rem; font-weight: 650; } }
+.oss-bucket-card__traffic { padding-top: .9rem; gap: 1.8rem; > div { min-width: 0; flex: 1; } span { color: var(--el-text-color-placeholder); font-size: 1rem; } strong { margin-left: .55rem; color: var(--el-text-color-regular); font-size: 1.1rem; font-weight: 600; } }
+.oss-bucket-card__footer { justify-content: flex-end; padding-top: 1rem; font-size: 1.05rem; }
+.oss-bucket-card__enter { gap: .25rem; color: var(--el-color-primary); font-weight: 500; white-space: nowrap; .el-icon { font-size: 1.1rem; transition: transform .18s ease; } }
+.oss-bucket-card:hover .oss-bucket-card__enter .el-icon { transform: translateX(.2rem); }
+:global(.oss-bucket-detail__title) { padding-bottom: .9rem; border-bottom: 1px solid var(--el-border-color-lighter); font-size: 1.3rem; font-weight: 650; }
+:global(.oss-bucket-detail dl) { display: grid; margin: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 1.6rem; }
+:global(.oss-bucket-detail dl > div) { min-width: 0; padding-top: 1rem; }
+:global(.oss-bucket-detail dt) { color: var(--el-text-color-secondary); font-size: 1.02rem; }
+:global(.oss-bucket-detail dd) { min-width: 0; margin: .35rem 0 0; color: var(--el-text-color-primary); font-size: 1.1rem; }
+:global(.oss-bucket-detail__endpoint) { grid-column: 1 / -1; }
+:global(.oss-bucket-detail__endpoint dd) { display: flex; min-width: 0; align-items: center; gap: .4rem; }
+:global(.oss-bucket-detail__endpoint code) { min-width: 0; overflow: hidden; padding: .3rem .5rem; border-radius: .4rem; color: var(--el-text-color-regular); background: var(--el-fill-color-light); text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+:global(.oss-bucket-detail__hint) { margin: 1rem 0 0; color: var(--el-text-color-placeholder); font-size: 1rem; }
 .resource-toolbar { justify-content: space-between; gap: 1.6rem; margin-bottom: 1rem; }
 .resource-toolbar__filters { min-width: 0; gap: .8rem; .el-input { width: 30rem; } .el-select { width: 15rem; } }
 .resource-toolbar__actions { flex: 0 0 auto; gap: .6rem; }
@@ -2033,6 +2221,6 @@ onBeforeUnmount(() => {
 .dns-provider-alert { margin: -.2rem 0 1rem; }
 .record-toolbar__actions { gap: .8rem; .el-input { width: 22rem; } .el-select { width: 12rem; } }
 .record-log-toolbar { gap: .8rem; margin-bottom: 1.2rem; .el-input { flex: 1; } }
-@media (max-width: 1280px) { .resource-navigation__item { padding: 0 1.3rem; } }
+@media (max-width: 1280px) { .resource-navigation__item { padding: 0 1.3rem; } .oss-bucket-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 1100px) { .detail-header { flex-wrap: wrap; } .detail-header__aside { margin-left: 5.6rem; } .resource-navigation { align-items: flex-start; flex-direction: column; gap: .8rem; } .resource-navigation__meta { align-self: flex-end; } .dns-layout { grid-template-columns: 22rem minmax(0, 1fr); } .esa-layout { grid-template-columns: 23rem minmax(0, 1fr); } .esa-overview { flex-direction: column; gap: 1rem; } .esa-overview__facts { width: 100%; } .resource-toolbar, .resource-toolbar__filters { flex-wrap: wrap; } .record-toolbar { align-items: flex-start; flex-direction: column; } }
 </style>

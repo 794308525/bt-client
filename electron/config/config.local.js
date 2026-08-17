@@ -26,7 +26,7 @@ module.exports = appInfo => {
 		title: '堡塔',
 		width: 1662,
 		height: 900,
-		minWidth: 500,
+		minWidth: 900,
 		minHeight: 300,
 		skipTaskbar: false,
 		webPreferences: {

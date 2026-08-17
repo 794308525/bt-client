@@ -708,7 +708,6 @@ class PanelController extends Controller {
     let pdata = {
       title: args.data.title,
       api_token: pub.trim(args.data.token),
-
     }
 
     // 使用代理
@@ -721,29 +720,56 @@ class PanelController extends Controller {
     if (!pdata.api_token) return pub.send_error_msg(event, channel, pub.lang('Token不能为空'));
     let token_data = pub.parse_token(pdata.api_token);
     if (!token_data) return pub.send_error_msg(event, channel, pub.lang('Token解析失败'));
-    pdata.url = token_data.url;
+    let input_url = pub.trim_char(pub.trim(args.data.url || ''), '/');
+    pdata.url = input_url || pub.trim_char(pub.trim(token_data.url), '/');
+
+    // 通过编辑覆盖 Token 中记录的旧地址，适用于内网面板 IP 发生变化的场景。
+    let reg = /^(http|https):\/\/[a-zA-Z0-9\.\-]+(:[0-9]+)?$/;
+    if (!reg.test(pdata.url)) {
+      return pub.send_error_msg(event, channel, pub.lang('URL地址格式不正确'));
+    }
 
     // 检查是否已经绑定
     let find = pub.M(this.TABLE).where('panel_id=?', panel_id).find();
     if (!find) return pub.send_error_msg(event, channel, pub.lang('此面板未绑定过，请先绑定'));
+    let duplicate_count = pub.M(this.TABLE)
+      .where('url=? and panel_id<>?', [pdata.url, panel_id])
+      .count();
+    if (duplicate_count) {
+      return pub.send_error_msg(event, channel, pub.lang('此面板已经绑定过，请勿重复绑定'));
+    }
+
+    const old_url = find.url;
+    const url_changed = old_url !== pdata.url;
+    if (url_changed) pdata.status = 0;
+
+    const update_panel = () => {
+      if (!pub.M(this.TABLE).where('panel_id=?', panel_id).update(pdata)) {
+        return pub.send_error_msg(event, channel, pub.lang('修改失败'));
+      }
+
+      if (url_changed) {
+        this.protocolProbeTimes.delete(String(find.panel_id || old_url));
+        this.deviceProbe.reset(find);
+        if (Array.isArray(global.PanelList)) {
+          this.update_global_panel_param(panel_id, { url: pdata.url, status: 0 });
+        }
+        Services.get('user').removePanelToCloud(old_url);
+      }
+
+      global.socks.syncProxy(); // 同步代理池
+      Services.get('user').syncPanelToCloud();
+      pub.write_log(0, pub.lang('修改面板绑定[{}]成功', pdata.url));
+      return pub.send_success_msg(event, channel, pub.lang('修改成功'));
+    };
 
     // 是否有修改api_token
     if (find['api_token'] == pdata.api_token) {
-      // APP 密钥中的 URL 可能是协议自动探测前的旧地址，密钥未变时保留已校正的 URL。
-      pdata.url = find.url;
-      if (pub.M(this.TABLE).where('panel_id=?', panel_id).update(pdata)) {
-        global.socks.syncProxy(); // 同步代理池
-        Services.get('user').syncPanelToCloud();
-        pub.write_log(0, pub.lang('修改面板绑定[{}]成功', pdata.url));
-        return pub.send_success_msg(event, channel, pub.lang('修改成功'));
-      } else {
-        return pub.send_error_msg(event, channel, pub.lang('修改失败'));
-      }
+      return update_panel();
     }
 
     // 绑定面板
-    let app = new PanelApp(token_data.url, pdata.api_token);
-    let that = this;
+    let app = new PanelApp(pdata.url, pdata.api_token, Object.assign({}, find, pdata));
     app.bind(function (res, err) {
       if (err) {
         return pub.send_error_msg(event, channel, pub.lang('连接失败: {}', err));
@@ -764,16 +790,7 @@ class PanelController extends Controller {
               if (res2 == '1') {
                 // 添加到数据库
                 pdata.addtime = pub.time();
-                if (pub.M(that.TABLE).where('panel_id=?', panel_id).update(pdata)) {
-                  global.socks.syncProxy(); // 同步代理池
-                  pub.write_log(0, pub.lang('修改面板绑定[{}]成功', pdata.url));
-                  // 同步到云端
-                  Services.get('user').syncPanelToCloud();
-                  return pub.send_success_msg(event, channel, pub.lang('修改成功'));
-                }
-                // 添加到数据库失败
-                pub.write_log(0, pub.lang('修改面板绑定[{}]失败', pdata.url), 1);
-                return pub.send_error_msg(event, channel, pub.lang('修改失败'));
+                return update_panel();
               }
               return get_bind_status(num);
             });
@@ -985,6 +1002,30 @@ class PanelController extends Controller {
       });
     } catch (err) {
       return pub.send_error(event, channel, pub.lang('面板API初始化失败: {}', err.message));
+    }
+  }
+
+  /**
+   * @name 手动重连单个面板
+   * @description 立即清除探测冷却，并复用负载同步链路尝试当前地址、备用协议及设备可达性探测。
+   */
+  async reconnect(args, event) {
+    const channel = args.channel;
+    const panel_id = Number(args.data.panel_id);
+    const panel = pub.M(this.TABLE).where('panel_id=?', panel_id).find();
+    if (!panel) {
+      return pub.send_error_msg(event, channel, pub.lang('面板不存在'));
+    }
+    if (!panel.url || !panel.api_token) {
+      return pub.send_error_msg(event, channel, pub.lang('面板连接信息不完整，请先编辑面板配置'));
+    }
+
+    this.protocolProbeTimes.delete(String(panel.panel_id || panel.url));
+    this.deviceProbe.reset(panel);
+    try {
+      this.sync_load(channel, panel, null, true);
+    } catch (err) {
+      return pub.send_error_msg(event, channel, pub.lang('重连失败: {}', err.message));
     }
   }
 
@@ -1205,7 +1246,7 @@ class PanelController extends Controller {
    * @param {*} panel 
    * @param {*} callback 回调函数，可不传
    */
-  sync_load(channel, panel, callback) {
+  sync_load(channel, panel, callback, force_send = false) {
     let that = this;
     let p;
     if (!panel.api_token || !panel.url) return;
@@ -1289,7 +1330,7 @@ class PanelController extends Controller {
 				
         // 发送负载信息到前端
         try {
-          if (channel && Electron.mainWindow.isFocused()) {
+          if (channel && (force_send || Electron.mainWindow.isFocused())) {
             let result = {
               panel_id: panel.panel_id,
               ov: panel.ov,

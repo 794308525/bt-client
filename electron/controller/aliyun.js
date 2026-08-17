@@ -16,6 +16,8 @@ function sendAliyunError(event, channel, error) {
       errorCode: normalized.code,
       requestId: normalized.requestId || '',
       detail: normalized.detail || '',
+      service: normalized.service || '',
+      status: normalized.status || 'error',
     },
   });
 }
@@ -24,6 +26,7 @@ class AliyunController extends Controller {
   constructor(ctx) {
     super(ctx);
     this.TABLE = 'aliyun_account';
+    aliyunService.cleanupEsaUrlRankingCache();
   }
 
   /**
@@ -36,9 +39,10 @@ class AliyunController extends Controller {
     ].concat(pub.M('aliyun_group').order('group_id ASC').select());
 
     const accounts = pub.M(this.TABLE)
-      .field('account_id, group_id, remark, access_key_id, balance, balance_currency, balance_refresh_time, server_count, domain_count, esa_count, cdn_count, cdn_status, oss_count, sort, addtime, update_time, resource_refresh_time, resource_error, resource_error_detail')
+      .field('account_id, group_id, remark, access_key_id, balance, balance_currency, balance_refresh_time, server_count, domain_count, esa_count, cdn_count, cdn_status, oss_count, resource_status, sort, addtime, update_time, resource_refresh_time, resource_error, resource_error_detail')
       .order('sort DESC, account_id DESC')
-      .select();
+      .select()
+      .map(account => aliyunService.safeAccount(account));
 
     const countMap = {};
     accounts.forEach(account => {
@@ -63,6 +67,32 @@ class AliyunController extends Controller {
       return pub.send_success(event, args.channel, aliyunService.safeAccount(
         aliyunService.getAccount(args.data.account_id)
       ));
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async cache_info(args, event) {
+    try {
+      return pub.send_success(event, args.channel, aliyunService.getEsaUrlCacheInfo());
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async cache_set_limit(args, event) {
+    try {
+      const data = aliyunService.setEsaUrlCacheLimit(args.data.max_mb);
+      return pub.send(event, args.channel, { status: true, msg: pub.lang('缓存上限已保存'), data });
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async cache_clear(args, event) {
+    try {
+      const data = aliyunService.clearEsaUrlCache();
+      return pub.send(event, args.channel, { status: true, msg: pub.lang('阿里云 URL 分析缓存已清理'), data });
     } catch (error) {
       return sendAliyunError(event, args.channel, error);
     }
@@ -130,6 +160,7 @@ class AliyunController extends Controller {
       cdn_count: -1,
       cdn_status: 'unknown',
       oss_count: -1,
+      resource_status: '{}',
       resource_refresh_time: 0,
       resource_error: '',
       resource_error_detail: '',
@@ -150,9 +181,42 @@ class AliyunController extends Controller {
     }
     const removed = pub.M(this.TABLE).where('account_id=?', accountId).delete();
     aliyunService.clearAccountCache(accountId);
+    aliyunService.clearEsaUrlRankingDiskCache(accountId);
     return removed
       ? pub.send_success_msg(event, args.channel, pub.lang('删除成功'))
       : pub.send_error_msg(event, args.channel, pub.lang('删除失败'));
+  }
+
+  /**
+   * 保存阿里云账号默认展示顺序。
+   */
+  async set_sort(args, event) {
+    const accountIds = Array.isArray(args.data.account_ids)
+      ? [...new Set(args.data.account_ids.map(Number).filter(id => Number.isInteger(id) && id > 0))]
+      : [];
+    if (!accountIds.length) {
+      return pub.send_error_msg(event, args.channel, pub.lang('排序数据不能为空'));
+    }
+
+    const currentList = pub.M(this.TABLE).order('sort DESC, account_id DESC').select();
+    const currentIds = new Set(currentList.map(account => Number(account.account_id)));
+    const orderedIds = accountIds.filter(accountId => currentIds.has(accountId));
+    if (!orderedIds.length) {
+      return pub.send_error_msg(event, args.channel, pub.lang('排序账号不存在'));
+    }
+
+    const orderedIdSet = new Set(orderedIds);
+    const queue = [...orderedIds];
+    const mergedIds = currentList.map(account => {
+      const accountId = Number(account.account_id);
+      return orderedIdSet.has(accountId) ? queue.shift() : accountId;
+    });
+    const total = mergedIds.length;
+    mergedIds.forEach((accountId, index) => {
+      pub.M(this.TABLE).where('account_id=?', accountId).update({ sort: total - index });
+    });
+
+    return pub.send_success_msg(event, args.channel, pub.lang('排序已保存'));
   }
 
   async refresh_account_summary(args, event) {
@@ -290,6 +354,29 @@ class AliyunController extends Controller {
     }
   }
 
+  async esa_traffic_analytics(args, event) {
+    try {
+      const data = await aliyunService.getEsaTrafficAnalytics(args.data.account_id, args.data);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async esa_url_rankings(args, event) {
+    try {
+      const sendProgress = progress => {
+        if (event.sender && !event.sender.isDestroyed()) {
+          event.sender.send(args.channel, { __ipc_progress: true, data: progress });
+        }
+      };
+      const data = await aliyunService.getEsaUrlRankingAnalytics(args.data.account_id, args.data, sendProgress);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
   async cdn_domain_list(args, event) {
     try {
       const data = await aliyunService.listCdnDomains(args.data.account_id, args.data);
@@ -329,6 +416,15 @@ class AliyunController extends Controller {
   async cdn_operation_logs(args, event) {
     try {
       const data = await aliyunService.listCdnOperationLogs(args.data.account_id, args.data);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async cdn_traffic_analytics(args, event) {
+    try {
+      const data = await aliyunService.getCdnTrafficAnalytics(args.data.account_id, args.data);
       return pub.send_success(event, args.channel, data);
     } catch (error) {
       return sendAliyunError(event, args.channel, error);
