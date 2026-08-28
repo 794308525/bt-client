@@ -584,7 +584,161 @@
 				</div>
 				<div class="pagination"><el-pagination v-model:current-page="ossPage" :page-size="20" layout="total, prev, pager, next" :total="ossTotal" @current-change="loadOssBuckets" /></div>
 			</el-tab-pane>
+
+			<el-tab-pane name="sms" class="sms-pane">
+				<div class="sms-view-switch">
+					<el-radio-group v-model="smsView" size="small" @change="handleSmsViewChange">
+						<el-radio-button label="signs">{{ pub.lang('短信签名') }}</el-radio-button>
+						<el-radio-button label="templates">{{ pub.lang('短信模板') }}</el-radio-button>
+						<el-radio-button label="statistics">{{ pub.lang('发送统计') }}</el-radio-button>
+						<el-radio-button label="details">{{ pub.lang('发送明细') }}</el-radio-button>
+					</el-radio-group>
+				</div>
+
+				<template v-if="smsView === 'signs'">
+					<div class="resource-toolbar">
+						<div class="sms-section-title">
+							<strong>{{ pub.lang('签名信息') }}</strong>
+							<span>{{ pub.lang('查看签名审核状态和报备详情') }}</span>
+						</div>
+						<el-button :icon="Refresh" :loading="smsSignLoading" @click="loadSmsSigns(smsSignPage)" />
+					</div>
+					<div class="sms-table-wrap">
+						<el-table :data="smsSigns" v-loading="smsSignLoading" row-key="sign_name" height="100%">
+							<el-table-column prop="sign_name" :label="pub.lang('签名名称')" min-width="180" />
+							<el-table-column :label="pub.lang('审核状态')" width="110"><template #default="{ row }"><el-tag :type="smsAuditStatusType(row.audit_status)">{{ smsAuditStatusName(row.audit_status) }}</el-tag></template></el-table-column>
+							<el-table-column prop="business_type" :label="pub.lang('业务类型')" min-width="140" show-overflow-tooltip />
+							<el-table-column prop="create_date" :label="pub.lang('创建时间')" width="180" />
+							<el-table-column prop="order_id" :label="pub.lang('工单号')" min-width="150" show-overflow-tooltip />
+							<el-table-column prop="reject_info" :label="pub.lang('审核说明')" min-width="210" show-overflow-tooltip><template #default="{ row }">{{ row.reject_info || '--' }}</template></el-table-column>
+							<el-table-column :label="pub.lang('操作')" width="80" fixed="right"><template #default="{ row }"><el-button link type="primary" :loading="smsDetailLoadingKey === `sign:${row.sign_name}`" @click="openSmsSignDetail(row)">{{ pub.lang('详情') }}</el-button></template></el-table-column>
+						</el-table>
+					</div>
+					<div class="pagination"><el-pagination v-model:current-page="smsSignPage" :page-size="20" layout="total, prev, pager, next" :total="smsSignTotal" @current-change="loadSmsSigns" /></div>
+				</template>
+
+				<template v-else-if="smsView === 'templates'">
+					<div class="resource-toolbar">
+						<div class="sms-section-title">
+							<strong>{{ pub.lang('模板信息') }}</strong>
+							<span>{{ pub.lang('查看模板内容、类型和审核状态') }}</span>
+						</div>
+						<el-button :icon="Refresh" :loading="smsTemplateLoading" @click="loadSmsTemplates(smsTemplatePage)" />
+					</div>
+					<div class="sms-table-wrap">
+						<el-table :data="smsTemplates" v-loading="smsTemplateLoading" row-key="template_code" height="100%">
+							<el-table-column :label="pub.lang('模板')" min-width="210"><template #default="{ row }"><div class="instance-name">{{ row.template_name || '--' }}</div><div class="muted mono">{{ row.template_code }}</div></template></el-table-column>
+							<el-table-column :label="pub.lang('类型')" width="110"><template #default="{ row }">{{ smsTemplateTypeName(row.template_type) }}</template></el-table-column>
+							<el-table-column :label="pub.lang('审核状态')" width="110"><template #default="{ row }"><el-tag :type="smsAuditStatusType(row.audit_status)">{{ smsAuditStatusName(row.audit_status) }}</el-tag></template></el-table-column>
+							<el-table-column prop="signature_name" :label="pub.lang('关联签名')" min-width="140" show-overflow-tooltip />
+							<el-table-column prop="template_content" :label="pub.lang('模板内容')" min-width="280" show-overflow-tooltip />
+							<el-table-column prop="create_date" :label="pub.lang('创建时间')" width="180" />
+							<el-table-column :label="pub.lang('操作')" width="80" fixed="right"><template #default="{ row }"><el-button link type="primary" :loading="smsDetailLoadingKey === `template:${row.template_code}`" @click="openSmsTemplateDetail(row)">{{ pub.lang('详情') }}</el-button></template></el-table-column>
+						</el-table>
+					</div>
+					<div class="pagination"><el-pagination v-model:current-page="smsTemplatePage" :page-size="20" layout="total, prev, pager, next" :total="smsTemplateTotal" @current-change="loadSmsTemplates" /></div>
+				</template>
+
+				<template v-else-if="smsView === 'statistics'">
+					<div class="resource-toolbar sms-query-toolbar">
+						<div class="resource-toolbar__filters">
+							<el-select v-model="smsStatisticsQuery.is_globe">
+								<el-option :label="pub.lang('国内短信')" :value="1" />
+								<el-option :label="pub.lang('国际/港澳台短信')" :value="2" />
+							</el-select>
+							<el-date-picker v-model="smsStatisticsRange" type="daterange" value-format="YYYYMMDD" :start-placeholder="pub.lang('开始日期')" :end-placeholder="pub.lang('结束日期')" />
+							<el-select v-model="smsStatisticsQuery.template_type" clearable :placeholder="pub.lang('全部模板类型')">
+								<el-option :label="pub.lang('验证码')" :value="0" />
+								<el-option :label="pub.lang('通知短信')" :value="1" />
+								<el-option :label="pub.lang('推广短信')" :value="2" />
+								<el-option :label="pub.lang('国际短信')" :value="3" />
+								<el-option :label="pub.lang('数字短信')" :value="7" />
+							</el-select>
+							<el-input v-model="smsStatisticsQuery.sign_name" clearable :placeholder="pub.lang('签名名称（可选）')" @keydown.enter="loadSmsStatistics(1)" />
+						</div>
+						<div class="resource-toolbar__actions">
+							<el-button type="primary" :icon="Search" :loading="smsStatisticsLoading" @click="loadSmsStatistics(1)">{{ pub.lang('查询') }}</el-button>
+							<el-button :icon="Refresh" :loading="smsStatisticsLoading" @click="loadSmsStatistics(smsStatisticsPage)" />
+						</div>
+					</div>
+					<div class="sms-table-wrap">
+						<el-table :data="smsStatistics" v-loading="smsStatisticsLoading" row-key="send_date" height="100%">
+							<el-table-column :label="pub.lang('发送日期')" min-width="150"><template #default="{ row }">{{ formatSmsDate(row.send_date) }}</template></el-table-column>
+							<el-table-column prop="total_count" :label="pub.lang('发送总量')" min-width="120" />
+							<el-table-column prop="success_count" :label="pub.lang('成功回执')" min-width="120" />
+							<el-table-column prop="failed_count" :label="pub.lang('失败回执')" min-width="120" />
+							<el-table-column prop="pending_count" :label="pub.lang('未收到回执')" min-width="120" />
+							<el-table-column :label="pub.lang('成功率')" min-width="120"><template #default="{ row }">{{ smsSuccessRate(row) }}</template></el-table-column>
+						</el-table>
+					</div>
+					<div class="pagination"><el-pagination v-model:current-page="smsStatisticsPage" :page-size="20" layout="total, prev, pager, next" :total="smsStatisticsTotal" @current-change="loadSmsStatistics" /></div>
+				</template>
+
+				<template v-else>
+					<el-alert type="info" :closable="false" show-icon class="sms-detail-alert" :title="pub.lang('阿里云仅支持按单个手机号和发送日期查询明细，日期范围为最近 30 天；查询结果不会保存到本地。')" />
+					<div class="resource-toolbar sms-query-toolbar">
+						<div class="resource-toolbar__filters">
+							<el-input v-model="smsDetailQuery.phone_number" clearable :placeholder="pub.lang('接收手机号')" @keydown.enter="loadSmsSendDetails(1)" />
+							<el-date-picker v-model="smsDetailQuery.send_date" type="date" value-format="YYYYMMDD" :disabled-date="disableSmsDetailDate" :placeholder="pub.lang('发送日期')" />
+							<el-input v-model="smsDetailQuery.biz_id" clearable placeholder="BizId（可选）" @keydown.enter="loadSmsSendDetails(1)" />
+						</div>
+						<div class="resource-toolbar__actions">
+							<el-button type="primary" :icon="Search" :loading="smsSendDetailLoading" @click="loadSmsSendDetails(1)">{{ pub.lang('查询') }}</el-button>
+						</div>
+					</div>
+					<div class="sms-table-wrap">
+						<el-table :data="smsSendDetails" v-loading="smsSendDetailLoading" :row-key="smsSendDetailRowKey" height="100%">
+							<el-table-column :label="pub.lang('发送状态')" width="110"><template #default="{ row }"><el-tag :type="smsSendStatusType(row.send_status)">{{ smsSendStatusName(row.send_status) }}</el-tag></template></el-table-column>
+							<el-table-column prop="phone_number" :label="pub.lang('手机号')" min-width="150" />
+							<el-table-column prop="template_code" :label="pub.lang('模板 Code')" min-width="160" show-overflow-tooltip />
+							<el-table-column prop="content" :label="pub.lang('短信内容')" min-width="300" show-overflow-tooltip />
+							<el-table-column prop="send_date" :label="pub.lang('发送时间')" width="180" />
+							<el-table-column prop="receive_date" :label="pub.lang('回执时间')" width="180"><template #default="{ row }">{{ row.receive_date || '--' }}</template></el-table-column>
+							<el-table-column prop="error_code" :label="pub.lang('错误码')" min-width="130"><template #default="{ row }">{{ row.error_code || '--' }}</template></el-table-column>
+						</el-table>
+					</div>
+					<div class="pagination"><el-pagination v-model:current-page="smsSendDetailPage" :page-size="20" layout="total, prev, pager, next" :total="smsSendDetailTotal" @current-change="loadSmsSendDetails" /></div>
+				</template>
+			</el-tab-pane>
 		</el-tabs>
+
+		<el-drawer v-model="smsDetailVisible" :title="smsDetailKind === 'sign' ? pub.lang('短信签名详情') : pub.lang('短信模板详情')" size="520px">
+			<div v-loading="smsDetailDrawerLoading" class="sms-detail-drawer">
+				<el-descriptions v-if="smsDetailKind === 'sign' && smsSignDetail" :column="1" border>
+					<el-descriptions-item :label="pub.lang('签名名称')">{{ smsSignDetail.sign_name || '--' }}</el-descriptions-item>
+					<el-descriptions-item :label="pub.lang('签名 Code')">{{ smsSignDetail.sign_code || '--' }}</el-descriptions-item>
+					<el-descriptions-item :label="pub.lang('审核状态')"><el-tag :type="smsDetailStatusType(smsSignDetail.sign_status)">{{ smsDetailStatusName(smsSignDetail.sign_status) }}</el-tag></el-descriptions-item>
+					<el-descriptions-item :label="pub.lang('用途')">{{ smsSignDetail.sign_usage || '--' }}</el-descriptions-item>
+					<el-descriptions-item :label="pub.lang('申请说明')">{{ smsSignDetail.remark || '--' }}</el-descriptions-item>
+					<el-descriptions-item :label="pub.lang('应用场景')">{{ smsSignDetail.apply_scene || '--' }}</el-descriptions-item>
+					<el-descriptions-item :label="pub.lang('创建时间')">{{ smsSignDetail.create_date || '--' }}</el-descriptions-item>
+					<el-descriptions-item :label="pub.lang('审核时间')">{{ smsSignDetail.audit_date || '--' }}</el-descriptions-item>
+					<el-descriptions-item :label="pub.lang('审核说明')">{{ smsSignDetail.reject_info || '--' }}</el-descriptions-item>
+					<el-descriptions-item :label="pub.lang('工单号')">{{ smsSignDetail.order_id || '--' }}</el-descriptions-item>
+				</el-descriptions>
+				<div v-if="smsDetailKind === 'sign' && smsSignDetail?.isp_register_details.length" class="sms-register-details">
+					<h4>{{ pub.lang('运营商报备') }}</h4>
+					<el-table :data="smsSignDetail.isp_register_details" row-key="operator_code" size="small">
+						<el-table-column :label="pub.lang('运营商')" min-width="100"><template #default="{ row }">{{ smsOperatorName(row.operator_code) }}</template></el-table-column>
+						<el-table-column :label="pub.lang('报备状态')" min-width="130"><template #default="{ row }"><el-tag size="small" :type="smsRegisterStatusType(row.status)">{{ smsRegisterStatusName(row.status) }}</el-tag></template></el-table-column>
+						<el-table-column prop="complete_time" :label="pub.lang('反馈时间')" min-width="160"><template #default="{ row }">{{ row.complete_time || '--' }}</template></el-table-column>
+					</el-table>
+				</div>
+				<el-descriptions v-else-if="smsTemplateDetail" :column="1" border>
+					<el-descriptions-item :label="pub.lang('模板名称')">{{ smsTemplateDetail.template_name || '--' }}</el-descriptions-item>
+					<el-descriptions-item label="Template Code">{{ smsTemplateDetail.template_code || '--' }}</el-descriptions-item>
+					<el-descriptions-item :label="pub.lang('审核状态')"><el-tag :type="smsDetailStatusType(smsTemplateDetail.template_status)">{{ smsDetailStatusName(smsTemplateDetail.template_status) }}</el-tag></el-descriptions-item>
+					<el-descriptions-item :label="pub.lang('模板类型')">{{ smsTemplateTypeName(smsTemplateDetail.template_type) }}</el-descriptions-item>
+					<el-descriptions-item :label="pub.lang('关联签名')">{{ smsTemplateDetail.sign_list.join('、') || smsTemplateDetail.related_sign_name || '--' }}</el-descriptions-item>
+					<el-descriptions-item :label="pub.lang('模板内容')"><div class="sms-template-content">{{ smsTemplateDetail.template_content || '--' }}</div></el-descriptions-item>
+					<el-descriptions-item :label="pub.lang('申请说明')">{{ smsTemplateDetail.remark || '--' }}</el-descriptions-item>
+					<el-descriptions-item :label="pub.lang('应用场景')">{{ smsTemplateDetail.apply_scene || '--' }}</el-descriptions-item>
+					<el-descriptions-item :label="pub.lang('创建时间')">{{ smsTemplateDetail.create_date || '--' }}</el-descriptions-item>
+					<el-descriptions-item :label="pub.lang('审核时间')">{{ smsTemplateDetail.audit_date || '--' }}</el-descriptions-item>
+					<el-descriptions-item :label="pub.lang('审核说明')">{{ smsTemplateDetail.reject_info || '--' }}</el-descriptions-item>
+				</el-descriptions>
+			</div>
+		</el-drawer>
 
 		<el-dialog v-model="recordDialogVisible" width="520" align-center :title="recordForm.record_id ? pub.lang('编辑解析记录') : pub.lang('新增解析记录')" :close-on-click-modal="false" @closed="resetRecordForm">
 			<el-form ref="recordFormRef" :model="recordForm" :rules="recordRules" label-width="100px">
@@ -829,6 +983,12 @@ interface CdnSource { type: string; content: string; port: number; priority: num
 interface CdnDomain { domain_id: string; domain_name: string; cname: string; cdn_type: string; coverage: string; status: string; access_status: string; access_error: string; ssl_enabled: boolean; description: string; sources: CdnSource[]; create_time: string; update_time: string }
 interface CdnOperationLog { event_id: string; event_name: string; event_time: string; domains: string[]; operator: string; access_key_id: string; source_ip: string; region_id: string; request_id: string; success: boolean; error_code: string; error_message: string }
 interface OssBucket { name: string; region: string; endpoint: string; creation_time: string; storage_class: string; object_count: number | null; storage_size: number | null; stat_error: string; today_traffic: number | null; yesterday_traffic: number | null; traffic_error: string; traffic_update_time: number }
+interface SmsSign { sign_name: string; audit_status: string; business_type: string; create_date: string; order_id: string; reject_date: string; reject_info: string; reject_detail: string }
+interface SmsTemplate { template_code: string; template_name: string; template_content: string; template_type: number | string | null; audit_status: string; signature_name: string; create_date: string; order_id: string; reject_date: string; reject_info: string; reject_detail: string }
+interface SmsStatistic { send_date: string; total_count: number; success_count: number; failed_count: number; pending_count: number }
+interface SmsSendDetail { content: string; error_code: string; out_id: string; phone_number: string; receive_date: string; send_date: string; send_status: number; template_code: string }
+interface SmsSignDetail { sign_name: string; sign_code: string; sign_status: string; sign_usage: string; sign_tag: string; remark: string; apply_scene: string; create_date: string; audit_date: string; reject_info: string; order_id: string; isp_register_details: Array<{ operator_code: string; complete_time: string; status: number | null }> }
+interface SmsTemplateDetail { template_code: string; template_name: string; template_content: string; template_type: number | string | null; template_status: string; intl_type: number | null; related_sign_name: string; sign_list: string[]; remark: string; apply_scene: string; create_date: string; audit_date: string; reject_info: string; order_id: string }
 
 const route = useRoute()
 const router = useRouter()
@@ -841,7 +1001,7 @@ const account = ref<AliyunAccount>()
 const accountLoading = ref(false)
 const summaryRefreshing = ref(false)
 const balanceRefreshing = ref(false)
-const activeTab = ref(['servers', 'domains', 'esa', 'cdn', 'oss'].includes(String(route.query.tab)) ? String(route.query.tab) : 'servers')
+const activeTab = ref(['servers', 'domains', 'esa', 'cdn', 'oss', 'sms'].includes(String(route.query.tab)) ? String(route.query.tab) : 'servers')
 const resourceTabsRef = ref<HTMLElement>()
 const resourceIndicatorStyle = ref({ width: '0px', transform: 'translateX(0px)' })
 const currentResourceStatus = (key: ResourceStatusKey) => {
@@ -869,6 +1029,7 @@ const resourceTabItems = computed(() => [
 	{ name: 'esa', label: 'ESA', count: formatCount(account.value?.esa_count), status: resourceStatusText('esa') },
 	{ name: 'cdn', label: 'CDN', count: formatCount(account.value?.cdn_count), status: resourceStatusText('cdn') },
 	{ name: 'oss', label: 'OSS', count: formatCount(account.value?.oss_count), status: resourceStatusText('oss') },
+	{ name: 'sms', label: pub.lang('短信'), count: '--', status: '' },
 ])
 const updateResourceIndicator = () => nextTick(() => {
 	const container = resourceTabsRef.value
@@ -1179,6 +1340,45 @@ const ossBucketRules = computed<FormRules>(() => ({
 }))
 const ossRegions = computed(() => Array.from(new Set(['oss-cn-hangzhou', 'oss-cn-shanghai', 'oss-cn-beijing', 'oss-cn-shenzhen', 'oss-cn-hongkong', ...ossCandidates.value.map(item => item.region)])))
 
+const smsDateValue = (date: Date) => {
+	const year = date.getFullYear()
+	const month = String(date.getMonth() + 1).padStart(2, '0')
+	const day = String(date.getDate()).padStart(2, '0')
+	return `${year}${month}${day}`
+}
+const smsStatisticsStart = new Date()
+smsStatisticsStart.setDate(smsStatisticsStart.getDate() - 6)
+const smsView = ref<'signs' | 'templates' | 'statistics' | 'details'>('signs')
+const smsLoaded = ref(false)
+const smsSigns = ref<SmsSign[]>([])
+const smsSignLoading = ref(false)
+const smsSignLoaded = ref(false)
+const smsSignPage = ref(1)
+const smsSignTotal = ref(0)
+const smsTemplates = ref<SmsTemplate[]>([])
+const smsTemplateLoading = ref(false)
+const smsTemplateLoaded = ref(false)
+const smsTemplatePage = ref(1)
+const smsTemplateTotal = ref(0)
+const smsStatistics = ref<SmsStatistic[]>([])
+const smsStatisticsLoading = ref(false)
+const smsStatisticsLoaded = ref(false)
+const smsStatisticsPage = ref(1)
+const smsStatisticsTotal = ref(0)
+const smsStatisticsRange = ref<[string, string]>([smsDateValue(smsStatisticsStart), smsDateValue(new Date())])
+const smsStatisticsQuery = reactive<{ is_globe: number; template_type: number | ''; sign_name: string }>({ is_globe: 1, template_type: '', sign_name: '' })
+const smsSendDetails = ref<SmsSendDetail[]>([])
+const smsSendDetailLoading = ref(false)
+const smsSendDetailPage = ref(1)
+const smsSendDetailTotal = ref(0)
+const smsDetailQuery = reactive({ phone_number: '', send_date: smsDateValue(new Date()), biz_id: '' })
+const smsDetailVisible = ref(false)
+const smsDetailDrawerLoading = ref(false)
+const smsDetailLoadingKey = ref('')
+const smsDetailKind = ref<'sign' | 'template'>('sign')
+const smsSignDetail = ref<SmsSignDetail>()
+const smsTemplateDetail = ref<SmsTemplateDetail>()
+
 const loadAccount = async () => {
 	accountLoading.value = true
 	try {
@@ -1194,6 +1394,125 @@ const setResourceStatus = (key: ResourceStatusKey, status: string) => {
 }
 const applyResourceErrorStatus = (key: ResourceStatusKey, result: any) => {
 	if (result?.data?.status) setResourceStatus(key, result.data.status)
+}
+const loadSmsSigns = async (page = smsSignPage.value) => {
+	smsSignLoading.value = true
+	try {
+		const result = await request(routes.aliyun.sms_sign_list.path, { account_id: accountId, page, page_size: 20 })
+		if (!result?.status) return Message.request(result)
+		smsSigns.value = result.data.data || []
+		smsSignPage.value = result.data.page || page
+		smsSignTotal.value = result.data.total || 0
+		smsSignLoaded.value = true
+		smsLoaded.value = true
+	} finally { smsSignLoading.value = false }
+}
+const loadSmsTemplates = async (page = smsTemplatePage.value) => {
+	smsTemplateLoading.value = true
+	try {
+		const result = await request(routes.aliyun.sms_template_list.path, { account_id: accountId, page, page_size: 20 })
+		if (!result?.status) return Message.request(result)
+		smsTemplates.value = result.data.data || []
+		smsTemplatePage.value = result.data.page || page
+		smsTemplateTotal.value = result.data.total || 0
+		smsTemplateLoaded.value = true
+		smsLoaded.value = true
+	} finally { smsTemplateLoading.value = false }
+}
+const loadSmsStatistics = async (page = smsStatisticsPage.value) => {
+	if (!smsStatisticsRange.value?.[0] || !smsStatisticsRange.value?.[1]) return Message.warn(pub.lang('请选择统计日期范围'))
+	smsStatisticsLoading.value = true
+	try {
+		const result = await request(routes.aliyun.sms_send_statistics.path, {
+			account_id: accountId,
+			page,
+			page_size: 20,
+			start_date: smsStatisticsRange.value[0],
+			end_date: smsStatisticsRange.value[1],
+			...smsStatisticsQuery,
+		})
+		if (!result?.status) return Message.request(result)
+		smsStatistics.value = result.data.data || []
+		smsStatisticsPage.value = result.data.page || page
+		smsStatisticsTotal.value = result.data.total || 0
+		smsStatisticsLoaded.value = true
+		smsLoaded.value = true
+	} finally { smsStatisticsLoading.value = false }
+}
+const loadSmsSendDetails = async (page = smsSendDetailPage.value) => {
+	const phoneNumber = smsDetailQuery.phone_number.trim()
+	if (!/^\+?\d{6,20}$/.test(phoneNumber)) return Message.warn(pub.lang('请输入一个正确的短信接收手机号'))
+	if (!smsDetailQuery.send_date) return Message.warn(pub.lang('请选择发送日期'))
+	smsSendDetailLoading.value = true
+	try {
+		const result = await request(routes.aliyun.sms_send_details.path, {
+			account_id: accountId,
+			page,
+			page_size: 20,
+			phone_number: phoneNumber,
+			send_date: smsDetailQuery.send_date,
+			biz_id: smsDetailQuery.biz_id.trim(),
+		})
+		if (!result?.status) return Message.request(result)
+		smsSendDetails.value = result.data.data || []
+		smsSendDetailPage.value = result.data.page || page
+		smsSendDetailTotal.value = result.data.total || 0
+		smsLoaded.value = true
+	} finally { smsSendDetailLoading.value = false }
+}
+const handleSmsViewChange = (value: string | number | boolean) => {
+	if (value === 'signs' && !smsSignLoaded.value) loadSmsSigns(1)
+	if (value === 'templates' && !smsTemplateLoaded.value) loadSmsTemplates(1)
+	if (value === 'statistics' && !smsStatisticsLoaded.value) loadSmsStatistics(1)
+}
+const refreshSmsCurrentView = () => {
+	if (smsView.value === 'templates') return loadSmsTemplates(smsTemplatePage.value)
+	if (smsView.value === 'statistics') return loadSmsStatistics(smsStatisticsPage.value)
+	if (smsView.value === 'details') return smsDetailQuery.phone_number.trim() ? loadSmsSendDetails(smsSendDetailPage.value) : Promise.resolve()
+	return loadSmsSigns(smsSignPage.value)
+}
+const openSmsSignDetail = async (sign: SmsSign) => {
+	smsDetailKind.value = 'sign'
+	smsSignDetail.value = undefined
+	smsDetailVisible.value = true
+	smsDetailDrawerLoading.value = true
+	smsDetailLoadingKey.value = `sign:${sign.sign_name}`
+	try {
+		const result = await request(routes.aliyun.sms_sign_detail.path, { account_id: accountId, sign_name: sign.sign_name })
+		if (!result?.status) {
+			smsDetailVisible.value = false
+			return Message.request(result)
+		}
+		smsSignDetail.value = result.data
+	} finally {
+		smsDetailDrawerLoading.value = false
+		smsDetailLoadingKey.value = ''
+	}
+}
+const openSmsTemplateDetail = async (template: SmsTemplate) => {
+	smsDetailKind.value = 'template'
+	smsTemplateDetail.value = undefined
+	smsDetailVisible.value = true
+	smsDetailDrawerLoading.value = true
+	smsDetailLoadingKey.value = `template:${template.template_code}`
+	try {
+		const result = await request(routes.aliyun.sms_template_detail.path, { account_id: accountId, template_code: template.template_code })
+		if (!result?.status) {
+			smsDetailVisible.value = false
+			return Message.request(result)
+		}
+		smsTemplateDetail.value = result.data
+	} finally {
+		smsDetailDrawerLoading.value = false
+		smsDetailLoadingKey.value = ''
+	}
+}
+const disableSmsDetailDate = (date: Date) => {
+	const current = new Date()
+	current.setHours(0, 0, 0, 0)
+	const earliest = new Date(current)
+	earliest.setDate(earliest.getDate() - 29)
+	return date.getTime() < earliest.getTime() || date.getTime() > current.getTime()
 }
 const loadOssBuckets = async (page = ossPage.value, candidateOnly = false) => {
 	if (candidateOnly) ossCandidateLoading.value = true
@@ -1893,6 +2212,7 @@ const handleTabChange = (name: string | number) => {
 	if (name === 'esa' && !esaLoaded.value) loadEsaSites(1)
 	if (name === 'cdn' && !cdnLoaded.value) loadCdnDomains(1)
 	if (name === 'oss' && !ossLoaded.value) loadOssBuckets(1)
+	if (name === 'sms' && !smsLoaded.value) loadSmsSigns(1)
 }
 
 const lineName = (code: string) => recordLines.value.find(item => item.code === code)?.name || code
@@ -1984,6 +2304,47 @@ const cdnOperationName = (name: string) => ({
 	BatchStopCdnDomain: pub.lang('批量停用 CDN 域名'),
 	DeleteCdnDomain: pub.lang('删除 CDN 域名'),
 }[name] || name || '--')
+const smsAuditStatusName = (status: string) => ({
+	AUDIT_STATE_INIT: pub.lang('审核中'),
+	AUDIT_STATE_PASS: pub.lang('已通过'),
+	AUDIT_STATE_NOT_PASS: pub.lang('未通过'),
+	AUDIT_STATE_CANCEL: pub.lang('已取消'),
+	AUDIT_SATE_CANCEL: pub.lang('已取消'),
+}[status] || status || '--')
+const smsAuditStatusType = (status: string) => ({ AUDIT_STATE_PASS: 'success', AUDIT_STATE_INIT: 'warning', AUDIT_STATE_NOT_PASS: 'danger', AUDIT_STATE_CANCEL: 'info', AUDIT_SATE_CANCEL: 'info' }[status] || 'info')
+const smsDetailStatusName = (status: string) => ({
+	'0': pub.lang('审核中'),
+	'1': pub.lang('已通过'),
+	'2': pub.lang('未通过'),
+	'10': pub.lang('已取消'),
+	AUDIT_STATE_INIT: pub.lang('审核中'),
+	AUDIT_STATE_PASS: pub.lang('已通过'),
+	AUDIT_STATE_NOT_PASS: pub.lang('未通过'),
+	AUDIT_STATE_CANCEL: pub.lang('已取消'),
+}[String(status)] || status || '--')
+const smsDetailStatusType = (status: string) => ({ '0': 'warning', '1': 'success', '2': 'danger', '10': 'info', AUDIT_STATE_INIT: 'warning', AUDIT_STATE_PASS: 'success', AUDIT_STATE_NOT_PASS: 'danger', AUDIT_STATE_CANCEL: 'info' }[String(status)] || 'info')
+const smsTemplateTypeName = (type: number | string | null) => ({
+	'0': pub.lang('验证码'),
+	'1': pub.lang('通知短信'),
+	'2': pub.lang('推广短信'),
+	'3': pub.lang('国际短信'),
+	'7': pub.lang('数字短信'),
+}[String(type)] || String(type ?? '--'))
+const smsSendStatusName = (status: number) => ({ 1: pub.lang('等待回执'), 2: pub.lang('发送失败'), 3: pub.lang('发送成功') }[status] || pub.lang('未知'))
+const smsSendStatusType = (status: number) => ({ 1: 'warning', 2: 'danger', 3: 'success' }[status] || 'info')
+const smsOperatorName = (operator: string) => ({ mobile: pub.lang('中国移动'), unicom: pub.lang('中国联通'), telecom: pub.lang('中国电信') }[operator] || operator || '--')
+const smsRegisterStatusName = (status: number | null) => ({
+	'-2': pub.lang('未报备'),
+	'-1': pub.lang('报备中'),
+	'0': pub.lang('报备失败'),
+	'1': pub.lang('待验证'),
+	'2': pub.lang('报备失效'),
+	'3': pub.lang('报备成功'),
+}[String(status)] || pub.lang('未知'))
+const smsRegisterStatusType = (status: number | null) => ({ '-2': 'info', '-1': 'warning', '0': 'danger', '1': 'warning', '2': 'info', '3': 'success' }[String(status)] || 'info')
+const formatSmsDate = (value: string) => /^\d{8}$/.test(value) ? `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}` : value || '--'
+const smsSuccessRate = (row: SmsStatistic) => row.total_count > 0 ? `${(row.success_count / row.total_count * 100).toFixed(1)}%` : '--'
+const smsSendDetailRowKey = (row: SmsSendDetail) => [row.send_date, row.phone_number, row.template_code, row.out_id].join(':')
 const cloudStatusName = (status: string) => ({
 	active: pub.lang('已启用'), pending: pub.lang('待配置'), moved: pub.lang('已迁移'),
 	online: pub.lang('运行中'), offline: pub.lang('已停用'), configuring: pub.lang('配置中'),
@@ -2055,7 +2416,9 @@ const refreshCurrentPage = () => {
 				? loadCdnDomains(cdnPage.value)
 				: activeTab.value === 'oss'
 					? loadOssBuckets(ossPage.value)
-					: loadServers(true)
+					: activeTab.value === 'sms'
+						? refreshSmsCurrentView()
+						: loadServers(true)
 	return Promise.all([refreshSummary(), resourceRefresh])
 }
 const handleRefreshShortcut = (event: KeyboardEvent) => {
@@ -2136,6 +2499,15 @@ onBeforeUnmount(deactivatePageListeners)
 .cdn-table-wrap { min-height: 0; flex: 1; }
 .oss-pane { display: flex; height: calc(100vh - 23rem); min-height: 36rem; flex-direction: column; }
 .oss-bucket-scroll { min-height: 0; overflow-y: auto; flex: 1; }
+.sms-pane { display: flex; height: calc(100vh - 23rem); min-height: 36rem; flex-direction: column; }
+.sms-view-switch { display: flex; margin-bottom: 1.2rem; }
+.sms-section-title { display: flex; min-width: 0; align-items: baseline; gap: .9rem; strong { font-size: 1.35rem; font-weight: 650; } span { color: var(--el-text-color-secondary); font-size: 1.08rem; } }
+.sms-query-toolbar { align-items: flex-start; .resource-toolbar__filters { flex: 1; flex-wrap: wrap; .el-input { width: 19rem; } .el-select { width: 16rem; } .el-date-editor--daterange { width: 27rem; } .el-date-editor--date { width: 16rem; } } }
+.sms-detail-alert { margin-bottom: 1rem; }
+.sms-table-wrap { min-height: 0; flex: 1; }
+.sms-detail-drawer { min-height: 18rem; }
+.sms-template-content { line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
+.sms-register-details { margin-top: 2rem; h4 { margin: 0 0 1rem; font-size: 1.3rem; font-weight: 650; } }
 .oss-bucket-grid { display: grid; padding: .2rem .2rem 1rem; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.2rem; }
 .oss-bucket-card { min-width: 0; padding: 1.5rem; border: 1px solid var(--el-border-color-lighter); border-radius: .8rem; background: var(--el-bg-color); cursor: pointer; transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease; &:hover, &:focus-visible { border-color: var(--el-color-primary-light-5); box-shadow: 0 .5rem 1.5rem rgba(31, 45, 61, .08); transform: translateY(-1px); outline: 0; } }
 .oss-bucket-card__header, .oss-bucket-card__identity, .oss-bucket-card__actions, .oss-bucket-card__metrics, .oss-bucket-card__traffic, .oss-bucket-card__footer, .oss-bucket-card__enter { display: flex; align-items: center; }

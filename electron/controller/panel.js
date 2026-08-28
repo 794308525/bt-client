@@ -23,6 +23,8 @@ class PanelController extends Controller {
     super(ctx);
     this.TABLE = 'panel_info';
     this.protocolProbeTimes = new Map();
+    this.panelLoadInFlight = new Set();
+    this.panelLoadTimer = null;
     this.deviceProbe = new DeviceProbe({ timeout: 2500, maxConcurrent: 10 });
     global.PanelActionTime = pub.time();
   }
@@ -506,7 +508,9 @@ class PanelController extends Controller {
     // 解析Token
     if (!pdata.api_token) return pub.send_error_msg(event, channel, pub.lang('Token不能为空'));
     let token_data = pub.parse_token(pdata.api_token);
-    if (!token_data) return pub.send_error_msg(event, channel, pub.lang('Token解析失败'));
+    if (!token_data || typeof token_data.url !== 'string' || !token_data.url) {
+      return pub.send_error_msg(event, channel, pub.lang('Token解析失败'));
+    }
     pdata.url = token_data.url;
 
     // 检查是否已经绑定
@@ -519,7 +523,7 @@ class PanelController extends Controller {
     app.bind(function (res, err) {
       res = that.parseResult(res,err,3);
       if (res && res.status === false){
-        return send_error_msg(event,channel,res.msg);
+        return pub.send_error_msg(event,channel,res.msg);
       }
 
       if (err) {
@@ -719,7 +723,9 @@ class PanelController extends Controller {
     // 解析Token
     if (!pdata.api_token) return pub.send_error_msg(event, channel, pub.lang('Token不能为空'));
     let token_data = pub.parse_token(pdata.api_token);
-    if (!token_data) return pub.send_error_msg(event, channel, pub.lang('Token解析失败'));
+    if (!token_data || typeof token_data.url !== 'string' || !token_data.url) {
+      return pub.send_error_msg(event, channel, pub.lang('Token解析失败'));
+    }
     let input_url = pub.trim_char(pub.trim(args.data.url || ''), '/');
     pdata.url = input_url || pub.trim_char(pub.trim(token_data.url), '/');
 
@@ -749,13 +755,9 @@ class PanelController extends Controller {
       }
 
       if (url_changed) {
-        this.protocolProbeTimes.delete(String(find.panel_id || old_url));
-        this.deviceProbe.reset(find);
-        if (Array.isArray(global.PanelList)) {
-          this.update_global_panel_param(panel_id, { url: pdata.url, status: 0 });
-        }
-        Services.get('user').removePanelToCloud(old_url);
+        this.handle_panel_url_change(find, old_url, pdata.url);
       }
+      this.update_global_panel_param(panel_id, pdata);
 
       global.socks.syncProxy(); // 同步代理池
       Services.get('user').syncPanelToCloud();
@@ -859,6 +861,17 @@ class PanelController extends Controller {
     let find = pub.M(this.TABLE).where('panel_id=?', panel_id).find()
     // let old_proxy_id = find.proxy_id;
     if (!find) return pub.send_error_msg(event, channel, pub.lang('指定面板未绑定'));
+    const old_url = find.url;
+    const reg = /^(http|https):\/\/[a-zA-Z0-9\.\-]+(:[0-9]+)?$/;
+    if (!reg.test(pdata.url)) {
+      return pub.send_error_msg(event, channel, pub.lang('URL地址格式不正确'));
+    }
+    const duplicate_count = pub.M(this.TABLE)
+      .where('url=? and panel_id<>?', [pdata.url, panel_id])
+      .count();
+    if (duplicate_count) {
+      return pub.send_error_msg(event, channel, pub.lang('此面板已经绑定过，请勿重复绑定'));
+    }
     let keys = Object.keys(pdata);
     for (let i = 0; i < keys.length; i++) {
       find[keys[i]] = pdata[keys[i]];
@@ -888,6 +901,10 @@ class PanelController extends Controller {
     // 修改数据库
     let update = pub.M(that.TABLE).where('panel_id=?', panel_id).update(pdata)
     if (update) {
+      if (old_url !== pdata.url) {
+        that.handle_panel_url_change(find, old_url, pdata.url);
+      }
+      that.update_global_panel_param(panel_id, pdata);
       pub.write_log(0, pub.lang('修改面板[{}][{}]成功', panel_id, pdata.title));
       // 同步到云端
       Services.get('user').syncPanelToCloud();
@@ -1147,11 +1164,11 @@ class PanelController extends Controller {
     if (err) {
       error_text = typeof err === 'string'
         ? err
-        : `${err.code || ''} ${err.message || ''}`;
+        : `${err.code || ''} ${err.message || ''} ${err.statusCode || ''} ${typeof err.responseBody === 'string' ? err.responseBody : ''}`;
     }
     if (typeof res === 'string') error_text += ` ${res}`;
 
-    const network_error = /(EPROTO|ERR_SSL|SSL routines|TLS|wrong version number|unknown protocol|socket hang up|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ESOCKETTIMEDOUT|EHOSTUNREACH|ENETUNREACH|ENOTFOUND|EAI_AGAIN|ERR_NAME_NOT_RESOLVED|PANEL_HTTP_REDIRECT|plain HTTP request.*HTTPS|HTTP request.*HTTPS server)/i;
+    const network_error = /(EPROTO|ERR_SSL|SSL routines|TLS|wrong version number|unknown protocol|socket hang up|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ESOCKETTIMEDOUT|EHOSTUNREACH|ENETUNREACH|ENOTFOUND|EAI_AGAIN|ERR_NAME_NOT_RESOLVED|PANEL_PROTOCOL_MISMATCH|PANEL_HTTP_REDIRECT|plain HTTP request.*HTTPS|HTTP request.*HTTPS server)/i;
     return network_error.test(error_text);
   }
 
@@ -1168,7 +1185,7 @@ class PanelController extends Controller {
     if (!this.is_panel_network_error(res, err)) return false;
     const error_text = typeof err === 'string'
       ? err
-      : `${err && err.code ? err.code : ''} ${err && err.message ? err.message : ''}`;
+      : `${err && err.code ? err.code : ''} ${err && err.message ? err.message : ''} ${err && err.statusCode ? err.statusCode : ''} ${err && typeof err.responseBody === 'string' ? err.responseBody : ''}`;
     if (/(ENOTFOUND|EAI_AGAIN|ERR_NAME_NOT_RESOLVED)/i.test(error_text)) return false;
 
     const probe_key = String(panel.panel_id || panel.url);
@@ -1186,6 +1203,13 @@ class PanelController extends Controller {
    * @returns {boolean}
    */
   is_valid_panel_load_response(res) {
+    if (typeof res === 'string') {
+      try {
+        res = JSON.parse(res);
+      } catch (e) {
+        return false;
+      }
+    }
     if (!res || typeof res !== 'object' || Array.isArray(res)) return false;
     if (!res.load || typeof res.load !== 'object') return false;
     if (!['one', 'five', 'fifteen'].every((key) => Number.isFinite(res.load[key]))) return false;
@@ -1197,6 +1221,20 @@ class PanelController extends Controller {
       && typeof disk.path === 'string'
       && Array.isArray(disk.size)
       && disk.size.length >= 4);
+  }
+
+  /**
+   * 处理面板地址迁移。先写本地 tombstone，再删除旧云端身份，最后由调用方同步新地址。
+   */
+  handle_panel_url_change(panel, old_url, new_url) {
+    if (!panel || !old_url || !new_url || old_url === new_url) return false;
+    this.to_delete(old_url);
+    this.protocolProbeTimes.delete(String(panel.panel_id || old_url));
+    this.deviceProbe.reset(panel);
+    panel.url = new_url;
+    panel.status = 0;
+    this.update_global_panel_param(panel.panel_id, { url: new_url, status: 0 });
+    return true;
   }
 
   /**
@@ -1225,7 +1263,7 @@ class PanelController extends Controller {
 
     panel.url = new_url;
     panel.status = 0;
-    this.protocolProbeTimes.delete(String(panel.panel_id || old_url));
+    this.handle_panel_url_change(panel, old_url, new_url);
 
     const old_protocol = old_url.split(':')[0].toUpperCase();
     const new_protocol = new_url.split(':')[0].toUpperCase();
@@ -1235,7 +1273,6 @@ class PanelController extends Controller {
       : pub.lang('面板[{}]已自动从 {} 切换为 {}', panel_name, old_protocol, new_protocol);
 
     pub.write_log(0, msg);
-    Services.get('user').removePanelToCloud(old_url);
     Services.get('user').syncPanelToCloud();
     return { url: new_url, protocol: new_protocol.toLowerCase(), msg: msg };
   }
@@ -1246,16 +1283,42 @@ class PanelController extends Controller {
    * @param {*} panel 
    * @param {*} callback 回调函数，可不传
    */
-  sync_load(channel, panel, callback, force_send = false) {
+  sync_load(channel, panel, callback, force_send = false, on_complete) {
     let that = this;
     let p;
-    if (!panel.api_token || !panel.url) return;
+    let completed = false;
+    const complete = () => {
+      if (completed) return;
+      completed = true;
+      if (typeof on_complete === 'function') on_complete();
+    };
+    const sync_error = (message) => {
+      const error = new Error(message);
+      complete();
+      if (callback) return callback(null, error);
+      return undefined;
+    };
+    if (!panel || typeof panel !== 'object' || Array.isArray(panel)) {
+      return sync_error('Invalid panel');
+    }
+    if (typeof panel.api_token !== 'string' || !panel.api_token
+      || typeof panel.url !== 'string' || !panel.url) {
+      return sync_error('Invalid panel connection information');
+    }
     if(!channel) channel = 'panel_loads_recv';
     // console.log(panel);
-    if (panel.auth_type == 3) {
-      p = new PanelApp(panel.url, panel.api_token, panel);
-    } else {
-      p = new PanelApi(panel.url, panel.api_token, panel);
+    try {
+      if (panel.auth_type == 3) {
+        const token_data = pub.parse_token(panel.api_token);
+        if (!token_data || typeof token_data.url !== 'string' || !token_data.url) {
+          return sync_error('Invalid APP token');
+        }
+        p = new PanelApp(panel.url, panel.api_token, panel);
+      } else {
+        p = new PanelApi(panel.url, panel.api_token, panel);
+      }
+    } catch (error) {
+      return sync_error(error.message || 'Panel API initialization failed');
     }
     
     const handle_result = function (client, res, err, protocol_changed, connection_state) {
@@ -1263,6 +1326,7 @@ class PanelController extends Controller {
       const device_status = connection_state ? connection_state.device_status : 'online';
       const panel_status = connection_state ? connection_state.panel_status : 'online';
       if (res && res.status === false){
+				complete();
 				// -2表示获取不到授权状态，如果获取不到服务器状态和授权状态，直接将其设置为免费版
 				if(panel.ov === -1) pub.M(that.TABLE).where('panel_id=?', panel.panel_id).update({ ov: 0 })
 				if(panel.status === 0) {
@@ -1280,12 +1344,16 @@ class PanelController extends Controller {
           data: res
         });
 			}
-			if (callback) return callback(res, err);
+			if (callback) {
+				complete();
+				return callback(res, err);
+			}
 			// 重新获取面板信息
 			if(panel.ov == -1){
 				panel.ov = pub.M(that.TABLE).where('panel_id=?', panel.panel_id).getField('ov');
 			}
       if (err) {
+			complete();
         return Electron.mainWindow.webContents.send(channel, {
           panel_id: panel.panel_id,
           ov: panel.ov,
@@ -1303,9 +1371,11 @@ class PanelController extends Controller {
 					pub.M(that.TABLE).where('panel_id=?', panel.panel_id).update({ status: 0 });
 					that.update_global_panel_param(panel.panel_id, { status: 0 }); // 更新全局面板状态
         }
-        if(!panel.server_id || panel.ov == -1 || !panel.get_ov){
+        if(!panel.server_id){
           // 获取server_id
-          client.get_server_id(function(server_id,version,is_aaPanel){
+          try {
+            client.get_server_id(function(server_id,version,is_aaPanel){
+              try {
             if(server_id){
               panel.server_id = server_id;
               let pdata = { server_id: server_id };
@@ -1315,15 +1385,26 @@ class PanelController extends Controller {
                 // 更新全局面板列表
 								that.update_global_panel_param(panel.panel_id, { ov: version, get_ov: true }); // 更新全局面板版本
 
-                for(let i=global.PanelList.length-1;i>=0;i--){
-                  global.PanelList[i].is_open = true; // 是否允许打开面板
+                if (Array.isArray(global.PanelList)) {
+                  for(let i=global.PanelList.length-1;i>=0;i--){
+                    global.PanelList[i].is_open = true; // 是否允许打开面板
+                  }
                 }
               } 
               pub.M(that.TABLE).where('panel_id=?', panel.panel_id).update(pdata);
+              that.update_global_panel_param(panel.panel_id, pdata);
               if(!is_aaPanel) Services.get('user').getPanelOv(); // 同步面板信息
             }
-          });
-        } 
+              } finally {
+                complete();
+              }
+            });
+          } catch (e) {
+            complete();
+          }
+        } else {
+          complete();
+        }
 
         // 将最新的面板信息返回给前端
 				// res.title = panel.title;
@@ -1347,6 +1428,7 @@ class PanelController extends Controller {
           pub.log('sync load error:', err.message);
         }
       }
+      if (!res) complete();
     };
 
     const handle_failed_request = function (client, res, err) {
@@ -1402,6 +1484,7 @@ class PanelController extends Controller {
 	 */
 	update_global_panel_param(panel_id,param) { 
 			if(!panel_id || !param || typeof param !== 'object' || Array.isArray(param) || Object.keys(param).length == 0) return;
+			if (!Array.isArray(global.PanelList)) return;
 		// 遍历全局面板列表，修改参数
 		for (let i = 0; i < global.PanelList.length; i++) {
 			if (global.PanelList[i].panel_id == panel_id) {
@@ -1416,45 +1499,41 @@ class PanelController extends Controller {
     * 同步面板负载信息
     */
   get_loads() {
-    let that = this;
+    if (this.panelLoadTimer) clearTimeout(this.panelLoadTimer);
+    if (!global.PanelLoadStatus.status) {
+      this.panelLoadTimer = null;
+      return;
+    }
 
-    setTimeout(function () {
-      let time = pub.time();
-      if (global.PanelLoadStatus.status && time - global.PanelLoadStatus.last_time > 2) {
-        // 设置活跃时间
-        global.PanelLoadStatus.last_time = time;
+    this.panelLoadTimer = setTimeout(() => {
+      this.panelLoadTimer = null;
+      if (!global.PanelLoadStatus.status) return;
 
-
-        // 如果主窗口是活跃状态且10分钟内有操作，才获取负载信息
-        let last_time = time - global.PanelActionTime;
-        if (Electron.mainWindow.isFocused() && last_time < 600) {
-          // 获取窗口当前URL，如果是首页，获取面板负载信息
-          let url = Electron.mainWindow.webContents.getURL();
-          if (url.split("#")[1] === '/home') {
-            // 获取所有面板
-            if (!global.PanelList) {
-              let db_obj = pub.M(that.TABLE)
-              global.PanelList = db_obj.select();
-              db_obj.close();
-              db_obj = undefined;
-            }
-
-            for (let i = 0; i < global.PanelList.length; i++) {
-              // 同步面板负载信息，每个面板间隔0.1秒
-              setTimeout(function () {
-                that.sync_load('panel_loads_recv', global.PanelList[i]);
-              }, i * 100);
-            }
-          }
+      const time = pub.time();
+      global.PanelLoadStatus.last_time = time;
+      const last_time = time - global.PanelActionTime;
+      if (Electron.mainWindow.isFocused() && last_time < 600
+        && Electron.mainWindow.webContents.getURL().split("#")[1] === '/home') {
+        if (!Array.isArray(global.PanelList)) {
+          const db_obj = pub.M(this.TABLE);
+          global.PanelList = db_obj.select();
+          db_obj.close();
         }
-
-        // 递归获取
-        if (global.PanelLoadStatus.status) {
-            that.get_loads();
-        }
-        global.PanelLoadsCount++;
+        global.PanelList.forEach((panel, index) => {
+          setTimeout(() => {
+            if (!global.PanelLoadStatus.status) return;
+            const panel_key = String(panel.panel_id || panel.url);
+            if (this.panelLoadInFlight.has(panel_key)) return;
+            this.panelLoadInFlight.add(panel_key);
+            this.sync_load('panel_loads_recv', panel, null, false, () => {
+              this.panelLoadInFlight.delete(panel_key);
+            });
+          }, index * 100);
+        });
       }
-    }, 3000);
+      global.PanelLoadsCount++;
+      this.get_loads();
+    }, 10000);
   }
 
   /**
@@ -1499,6 +1578,10 @@ class PanelController extends Controller {
       return pub.send_error(event, args.channel, pub.lang('未启动负载信息获取'));
     }
     global.PanelLoadStatus.status = false;
+    if (this.panelLoadTimer) {
+      clearTimeout(this.panelLoadTimer);
+      this.panelLoadTimer = null;
+    }
     pub.log('stop load');
     return pub.send_success(event, args.channel, pub.lang('负载信息同步已经停止'));
   }

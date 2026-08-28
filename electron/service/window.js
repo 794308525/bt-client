@@ -135,6 +135,11 @@ class WindowService extends Service {
     errorHandle(win) {
         // 页面加载失败
         win.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+            const isDestroyed = () => !win
+                || (typeof win.isDestroyed === 'function' && win.isDestroyed())
+                || !win.webContents
+                || (typeof win.webContents.isDestroyed === 'function' && win.webContents.isDestroyed());
+            if (isDestroyed()) return;
             let message = pub.lang('请检查网络连接');
             switch (errorDescription) {
                 case 'ERR_TIMED_OUT':
@@ -144,9 +149,11 @@ class WindowService extends Service {
                     message = pub.lang('无法连接到网络');
                     // 重新加载
                     setTimeout(() => {
-                        if (!PanelViews[view_key].reload_num) PanelViews[view_key].reload_num = 0;
-                        PanelViews[view_key].reload_num++;
-                        PanelViews[view_key].webContents.reload();
+                        if (isDestroyed()) return;
+                        if (!Number.isFinite(win.reload_num)) win.reload_num = 0;
+                        if (win.reload_num >= 40) return;
+                        win.reload_num++;
+                        win.webContents.reload();
                     }, 500);
                     break;
                 case 'ERR_CONNECTION_RESET':
@@ -160,7 +167,8 @@ class WindowService extends Service {
                     break;
             }
 
-            if (errorDescription != 'ERR_CONNECTION_REFUSED' && PanelViews[view_key].reload_num < 40) {
+            if (errorDescription != 'ERR_CONNECTION_REFUSED' && (!Number.isFinite(win.reload_num) || win.reload_num < 40)) {
+                if (isDestroyed()) return;
                 win.loadURL('file://' + pub.get_public_path() + '/html/error.html');
                 dialog.showErrorBox(pub.lang('页面加载失败，{}', message), pub.lang('错误码：{}，错误描述：{}', errorCode, errorDescription));
             }
@@ -324,7 +332,7 @@ class WindowService extends Service {
             let table = 'panel_download';
             let start_time = pub.time();
             if (pub.M(table).where('url=? AND start_time=?', [url, start_time]).count()) {
-                return pub.log('Download is already exists');
+                return pub.debug('Download is already exists');
             }
 
             let download_id = pub.M(table).insert({

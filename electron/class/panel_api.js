@@ -46,18 +46,23 @@ PanelApi.prototype.get_sign = function() {
  * @param {object} callback 回调函数
  */
 PanelApi.prototype.request_to_panel = function(uri, pdata,callback) {
-    // 获取签名
-    let sign = this.get_sign();
+    try {
+        // 获取签名
+        let sign = this.get_sign();
 
-    // 拼接请求URL
-    let request_url = this.panel_url + uri;
+        // 拼接请求URL
+        let request_url = this.panel_url + uri;
 
-    // 请求数据处理
-    pdata['request_time'] = sign.request_time;
-    pdata['request_token'] = sign.request_token;
-    pub.httpPostProxy(request_url,pdata,this.panel.proxy_id,function(response,error){
-        callback(response,error);
-    });
+        // 请求数据处理
+        if (!pdata || typeof pdata !== 'object' || Array.isArray(pdata)) pdata = {};
+        pdata['request_time'] = sign.request_time;
+        pdata['request_token'] = sign.request_token;
+        pub.httpPostProxy(request_url,pdata,this.panel && this.panel.proxy_id || 0,function(response,error){
+            callback(response,error);
+        }, this.http_timeout);
+    } catch (error) {
+        callback(null,error);
+    }
 
 }
 
@@ -68,19 +73,42 @@ PanelApi.prototype.request_to_panel = function(uri, pdata,callback) {
  * @param {object} callback 回调函数
  */
 PanelApi.prototype.request = function(uri,data,callback){
-    this.request_to_panel(uri,data,function(response,error){
-        if(error){
-            return callback(null,error);
-        }else if(response.statusCode >= 300 && response.statusCode < 400){
-            let redirect_error = new Error(response.statusMessage || `HTTP ${response.statusCode}`);
-            redirect_error.code = 'PANEL_HTTP_REDIRECT';
-            return callback(response.body,redirect_error);
-        }else if(response.statusCode != 200){
-            return callback(response.body,response.statusMessage);
-        }else{
-            return callback(response.body,error);
-        }
-    });
+    try {
+        this.request_to_panel(uri,data,function(response,error){
+            try {
+                if(error){
+                    return callback(null,error);
+                }
+                if (!response) {
+                    return callback(null,new Error('Empty response'));
+                }
+                if(response.statusCode >= 300 && response.statusCode < 400){
+                    let redirect_error = new Error(response.statusMessage || `HTTP ${response.statusCode}`);
+                    redirect_error.code = 'PANEL_HTTP_REDIRECT';
+                    redirect_error.statusCode = response.statusCode;
+                    redirect_error.responseBody = response.body;
+                    return callback(null,redirect_error);
+                }else if(response.statusCode != 200){
+                    const response_body = response.body;
+                    const response_text = typeof response_body === 'string' ? response_body : '';
+                    const protocol_mismatch = /plain HTTP request.*HTTPS|HTTP request.*HTTPS server|wrong version number|unknown protocol/i.test(response_text);
+                    const response_error = new Error(response.statusMessage || `HTTP ${response.statusCode}`);
+                    response_error.statusCode = response.statusCode;
+                    response_error.responseBody = response_body;
+                    response_error.code = protocol_mismatch ? 'PANEL_PROTOCOL_MISMATCH' : 'PANEL_HTTP_STATUS';
+                    return callback(null,response_error);
+                }else if(response.body === undefined || response.body === null || response.body === ''){
+                    return callback(null,new Error('Empty response'));
+                }else{
+                    return callback(response.body,null);
+                }
+            } catch (callbackError) {
+                return callback(null,callbackError);
+            }
+        });
+    } catch (error) {
+        return callback(null,error);
+    }
 }
 
 
@@ -102,12 +130,20 @@ PanelApi.prototype.get_server_id = function(callback) {
     let uri = '/plugin?action=get_soft_list';
     let data = {p:1,type:8,force:0,query:'',row:1};
     this.request(uri, data, function(res, error){
-        if(typeof res == 'string'){
-            res = JSON.parse(res);
-        }
         let server_id = '';
-        if(res.serverid){
-            server_id = res.serverid;
+        if (error) return callback(server_id, error);
+        try {
+            if(typeof res == 'string'){
+                res = JSON.parse(res);
+            }
+            if (!res || typeof res !== 'object' || Array.isArray(res)) {
+                return callback(server_id, new Error('Invalid response'));
+            }
+            if(res.serverid){
+                server_id = res.serverid;
+            }
+        } catch (e) {
+            return callback(server_id, e);
         }
         callback(server_id);
     });
@@ -123,14 +159,22 @@ PanelApi.prototype.get_tmp_token = function(callback) {
     let data = {};
     let that = this;
     this.request(uri, data, function(res, error){
-        if(typeof res == 'string'){
-            res = JSON.parse(res);
-        }
+        if (error) return callback(null, error);
+        try {
+            if(typeof res == 'string'){
+                res = JSON.parse(res);
+            }
+            if (!res || typeof res !== 'object' || Array.isArray(res)) {
+                return callback(null, new Error('Invalid response'));
+            }
 
-        if(res && res.status && res.msg){
-            res = that.panel_url + '/login?tmp_token='+res.msg;
+            if(res.status && res.msg){
+                res = that.panel_url + '/login?tmp_token='+res.msg;
+            }
+        } catch (e) {
+            return callback(null, e);
         }
-        callback(res, error);
+        callback(res, null);
     });
 }
 

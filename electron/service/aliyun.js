@@ -6,6 +6,7 @@ const Bss = require('@alicloud/bssopenapi20171214');
 const Cdn = require('@alicloud/cdn20180510');
 const Cms = require('@alicloud/cms20190101');
 const Domain = require('@alicloud/domain20180129');
+const Dysmsapi = require('@alicloud/dysmsapi20170525');
 const ActionTrail = require('@alicloud/actiontrail20200706');
 const Swas = require('@alicloud/swas-open20200601');
 const Esa = require('@alicloud/esa20240910');
@@ -259,6 +260,13 @@ const SERVICE_ERROR_MESSAGES = {
     DomainOverLimit: 'CDN 域名数量已达到账号上限',
     InvalidSources: 'CDN 源站配置不正确，请检查源站地址和端口',
   },
+  sms: {
+    'Forbidden.Action': '当前 AccessKey 无权查询短信服务，请授予短信服务只读权限',
+    'isv.SMS_SERVICE_NOT_OPEN': '当前账号尚未开通短信服务',
+    'isv.ACCOUNT_NOT_EXISTS': '当前阿里云账号未开通或无法访问短信服务',
+    'isv.INVALID_PARAMETERS': '短信查询参数不正确，请检查后重试',
+    'isv.BUSINESS_LIMIT_CONTROL': '短信服务查询过于频繁，请稍后重试',
+  },
   oss: OSS_ERROR_MESSAGES,
 };
 
@@ -277,6 +285,7 @@ const SERVICE_NAMES = {
   domain: '域名解析',
   esa: 'ESA',
   cdn: 'CDN',
+  sms: '短信服务',
   oss: 'OSS',
 };
 
@@ -821,6 +830,7 @@ class AliyunService {
       dns: new AliDns.default({ ...config, endpoint: 'alidns.cn-hangzhou.aliyuncs.com' }),
       ecs: new Ecs.default(config),
       esa: new Esa.default(config),
+      sms: new Dysmsapi.default({ ...config, endpoint: 'dysmsapi.aliyuncs.com' }),
     };
   }
 
@@ -968,6 +978,239 @@ class AliyunService {
       const normalized = normalizeError(error, 'oss');
       return { traffic: {}, update_time: 0, error: normalized.message };
     }
+  }
+
+  normalizeSmsPage(options = {}) {
+    return {
+      page: Math.max(1, Number(options.page) || 1),
+      pageSize: Math.min(50, Math.max(1, Number(options.page_size) || 20)),
+    };
+  }
+
+  normalizeSmsDate(value, fieldName) {
+    const date = String(value || '').trim();
+    if (!/^\d{8}$/.test(date)) {
+      throw new AliyunServiceError(`${fieldName}必须使用 yyyyMMdd 格式`, 'InvalidSmsDate');
+    }
+    const year = Number(date.slice(0, 4));
+    const month = Number(date.slice(4, 6));
+    const day = Number(date.slice(6, 8));
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) {
+      throw new AliyunServiceError(`${fieldName}不是有效日期`, 'InvalidSmsDate');
+    }
+    return date;
+  }
+
+  getSmsResponseBody(response) {
+    const body = getBody(response);
+    if (body.code && String(body.code).toUpperCase() !== 'OK') {
+      const error = new AliyunServiceError(body.message || '短信服务查询失败', body.code, body.requestId || '');
+      error.service = 'sms';
+      throw error;
+    }
+    return body;
+  }
+
+  async listSmsSigns(accountId, options = {}) {
+    const account = this.getAccount(accountId);
+    const { page, pageSize } = this.normalizeSmsPage(options);
+    const client = this.createClients(account).sms;
+    const body = this.getSmsResponseBody(await this.request(() => client.querySmsSignList(
+      new Dysmsapi.QuerySmsSignListRequest({ pageIndex: page, pageSize })
+    ), 'sms'));
+    return {
+      data: (body.smsSignList || []).map(item => ({
+        sign_name: item.signName || '',
+        audit_status: item.auditStatus || '',
+        business_type: item.businessType || '',
+        create_date: item.createDate || '',
+        order_id: item.orderId || '',
+        reject_date: item.reason && item.reason.rejectDate || '',
+        reject_info: item.reason && item.reason.rejectInfo || '',
+        reject_detail: item.reason && item.reason.rejectSubInfo || '',
+      })),
+      total: Number(body.totalCount || 0),
+      page: Number(body.currentPage || page),
+      page_size: Number(body.pageSize || pageSize),
+      request_id: body.requestId || '',
+    };
+  }
+
+  async getSmsSign(accountId, signName) {
+    const account = this.getAccount(accountId);
+    const name = String(signName || '').trim();
+    if (!name) throw new AliyunServiceError('短信签名名称不能为空', 'SmsSignNameRequired');
+    const client = this.createClients(account).sms;
+    const body = this.getSmsResponseBody(await this.request(() => client.getSmsSign(
+      new Dysmsapi.GetSmsSignRequest({ signName: name })
+    ), 'sms'));
+    return {
+      sign_name: body.signName || name,
+      sign_code: body.signCode || '',
+      sign_status: String(body.signStatus ?? ''),
+      sign_usage: body.signUsage || '',
+      sign_tag: body.signTag || '',
+      remark: body.remark || '',
+      apply_scene: body.applyScene || '',
+      create_date: body.createDate || '',
+      audit_date: body.auditInfo && body.auditInfo.auditDate || '',
+      reject_info: body.auditInfo && body.auditInfo.rejectInfo || '',
+      order_id: body.orderId || '',
+      qualification_id: body.qualificationId || '',
+      third_party: Boolean(body.thirdParty),
+      register_result: body.registerResult ?? null,
+      isp_register_details: (body.signIspRegisterDetailList || []).map(item => ({
+        operator_code: item.operatorCode || '',
+        complete_time: item.operatorCompleteTime || '',
+        status: item.registerStatus ?? null,
+        reasons: (item.registerStatusReasons || []).map(reason => ({
+          code: reason.reasonCode || '',
+          descriptions: reason.reasonDescList || [],
+        })),
+      })),
+      request_id: body.requestId || '',
+    };
+  }
+
+  async listSmsTemplates(accountId, options = {}) {
+    const account = this.getAccount(accountId);
+    const { page, pageSize } = this.normalizeSmsPage(options);
+    const client = this.createClients(account).sms;
+    const body = this.getSmsResponseBody(await this.request(() => client.querySmsTemplateList(
+      new Dysmsapi.QuerySmsTemplateListRequest({ pageIndex: page, pageSize })
+    ), 'sms'));
+    return {
+      data: (body.smsTemplateList || []).map(item => ({
+        template_code: item.templateCode || '',
+        template_name: item.templateName || '',
+        template_content: item.templateContent || '',
+        template_type: item.outerTemplateType ?? item.templateType ?? null,
+        audit_status: item.auditStatus || '',
+        signature_name: item.signatureName || '',
+        create_date: item.createDate || '',
+        order_id: item.orderId || '',
+        reject_date: item.reason && item.reason.rejectDate || '',
+        reject_info: item.reason && item.reason.rejectInfo || '',
+        reject_detail: item.reason && item.reason.rejectSubInfo || '',
+      })),
+      total: Number(body.totalCount || 0),
+      page: Number(body.currentPage || page),
+      page_size: Number(body.pageSize || pageSize),
+      request_id: body.requestId || '',
+    };
+  }
+
+  async getSmsTemplate(accountId, templateCode) {
+    const account = this.getAccount(accountId);
+    const code = String(templateCode || '').trim();
+    if (!code) throw new AliyunServiceError('短信模板 Code 不能为空', 'SmsTemplateCodeRequired');
+    const client = this.createClients(account).sms;
+    const body = this.getSmsResponseBody(await this.request(() => client.getSmsTemplate(
+      new Dysmsapi.GetSmsTemplateRequest({ templateCode: code })
+    ), 'sms'));
+    return {
+      template_code: body.templateCode || code,
+      template_name: body.templateName || '',
+      template_content: body.templateContent || '',
+      template_type: body.templateType ?? '',
+      template_status: String(body.templateStatus ?? ''),
+      intl_type: body.intlType ?? null,
+      related_sign_name: body.relatedSignName || '',
+      sign_list: body.signList && body.signList.signList || [],
+      remark: body.remark || '',
+      apply_scene: body.applyScene || '',
+      create_date: body.createDate || '',
+      audit_date: body.auditInfo && body.auditInfo.auditDate || '',
+      reject_info: body.auditInfo && body.auditInfo.rejectInfo || '',
+      order_id: body.orderId || '',
+      variable_attribute: body.variableAttribute || '',
+      request_id: body.requestId || '',
+    };
+  }
+
+  async querySmsSendStatistics(accountId, options = {}) {
+    const account = this.getAccount(accountId);
+    const { page, pageSize } = this.normalizeSmsPage(options);
+    const startDate = this.normalizeSmsDate(options.start_date, '开始日期');
+    const endDate = this.normalizeSmsDate(options.end_date, '结束日期');
+    if (startDate > endDate) throw new AliyunServiceError('开始日期不能晚于结束日期', 'InvalidSmsDateRange');
+    const isGlobe = Number(options.is_globe) === 2 ? 2 : 1;
+    const templateType = options.template_type === '' || options.template_type === undefined
+      ? undefined
+      : Number(options.template_type);
+    if (templateType !== undefined && ![0, 1, 2, 3, 7].includes(templateType)) {
+      throw new AliyunServiceError('短信模板类型不正确', 'InvalidSmsTemplateType');
+    }
+    const signName = String(options.sign_name || '').trim();
+    const client = this.createClients(account).sms;
+    const body = this.getSmsResponseBody(await this.request(() => client.querySendStatistics(
+      new Dysmsapi.QuerySendStatisticsRequest({
+        startDate,
+        endDate,
+        isGlobe,
+        pageIndex: page,
+        pageSize,
+        signName: signName || undefined,
+        templateType,
+      })
+    ), 'sms'));
+    return {
+      data: (body.data && body.data.targetList || []).map(item => ({
+        send_date: item.sendDate || '',
+        total_count: Number(item.totalCount || 0),
+        success_count: Number(item.respondedSuccessCount || 0),
+        failed_count: Number(item.respondedFailCount || 0),
+        pending_count: Number(item.noRespondedCount || 0),
+      })),
+      total: Number(body.data && body.data.totalSize || 0),
+      page,
+      page_size: pageSize,
+      request_id: body.requestId || '',
+    };
+  }
+
+  async querySmsSendDetails(accountId, options = {}) {
+    const account = this.getAccount(accountId);
+    const { page, pageSize } = this.normalizeSmsPage(options);
+    const phoneNumber = String(options.phone_number || '').trim();
+    if (!/^\+?\d{6,20}$/.test(phoneNumber)) {
+      throw new AliyunServiceError('请输入一个正确的短信接收手机号', 'InvalidSmsPhoneNumber');
+    }
+    const sendDate = this.normalizeSmsDate(options.send_date, '发送日期');
+    const now = new Date();
+    const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+    const sendTime = Date.UTC(Number(sendDate.slice(0, 4)), Number(sendDate.slice(4, 6)) - 1, Number(sendDate.slice(6, 8)));
+    if (sendTime > today || sendTime < today - (29 * 24 * 60 * 60 * 1000)) {
+      throw new AliyunServiceError('发送日期必须在最近 30 天内', 'InvalidSmsDetailDateRange');
+    }
+    const bizId = String(options.biz_id || '').trim();
+    const client = this.createClients(account).sms;
+    const body = this.getSmsResponseBody(await this.request(() => client.querySendDetails(
+      new Dysmsapi.QuerySendDetailsRequest({
+        bizId: bizId || undefined,
+        currentPage: page,
+        pageSize,
+        phoneNumber,
+        sendDate,
+      })
+    ), 'sms'));
+    return {
+      data: (body.smsSendDetailDTOs && body.smsSendDetailDTOs.smsSendDetailDTO || []).map(item => ({
+        content: item.content || '',
+        error_code: item.errCode || '',
+        out_id: item.outId || '',
+        phone_number: item.phoneNum || '',
+        receive_date: item.receiveDate || '',
+        send_date: item.sendDate || '',
+        send_status: Number(item.sendStatus || 0),
+        template_code: item.templateCode || '',
+      })),
+      total: Number(body.totalCount || 0),
+      page,
+      page_size: pageSize,
+      request_id: body.requestId || '',
+    };
   }
 
   async listOssBuckets(accountId, options = {}) {
