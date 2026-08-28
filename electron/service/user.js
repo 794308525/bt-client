@@ -8,6 +8,7 @@ class UserService extends Service {
     constructor(ctx) {
         super(ctx);
         this.sync_password = pub.C('sync_password');
+        this.panelOvPromise = null;
     }
 
     /**
@@ -635,49 +636,60 @@ class UserService extends Service {
      * @return {object}
      */
     async getPanelOv() {
+        if (this.panelOvPromise) return this.panelOvPromise;
         let url = 'https://dj.bt.cn/index/get_panel_ov';
 
+        this.panelOvPromise = new Promise((resolve) => {
+            // 获取server_id列表，按 ID 聚合，避免每台面板重复请求同一信息。
+            let panel_list = pub.M('panel_info').select();
+            let server_id_set = new Set();
+            for (let i = 0; i < panel_list.length; i++) {
+                if (panel_list[i].server_id) server_id_set.add(String(panel_list[i].server_id));
+            }
+            let server_id_str = Array.from(server_id_set).join(',');
+            if (!server_id_str) return resolve(false);
 
-        // 获取server_id列表
-        let panel_list = pub.M('panel_info').select();
-        let server_id_list = [];
-        for (let i = 0; i < panel_list.length; i++) {
-            if (!panel_list[i].server_id) continue;
-            server_id_list.push(panel_list[i].server_id);
-        }
-
-        let server_id_str = server_id_list.join(',');
-        // 发送数据
-        pub.http_post(url, { server_id_list: server_id_str }, function (response, error) {
-            if (error) {
-                return false;
+            // 发送数据
+            pub.http_post(url, { server_id_list: server_id_str }, function (response, error) {
+            if (error || !response || typeof response !== 'object'
+                || response.body === undefined || response.body === null || response.body === '') {
+                return resolve(false);
             }
             let data = response.body;
             if (typeof data == 'string') {
                 try {
                     data = JSON.parse(data);
                 } catch (e) {
-                    pub.log('getPanelOv-Error: ', e.message);
-                    return false;
+                    pub.debug('getPanelOv-Error: ', e.message);
+                    return resolve(false);
                 }
             }
 
-            if (data.status == false) {
-                return false;
+            if (!data || typeof data !== 'object' || Array.isArray(data) || data.status == false
+                || !data.data || typeof data.data !== 'object' || Array.isArray(data.data)) {
+                return resolve(false);
             }
 
             // 更新面板信息
             for (let i = 0; i < panel_list.length; i++) {
                 if (!panel_list[i].server_id) continue;
                 let server_id = panel_list[i].server_id;
-                if (data.data[server_id] !== undefined) {
+                if (Object.prototype.hasOwnProperty.call(data.data, server_id)) {
                     panel_list[i].ov = data.data[server_id];
                     pub.M('panel_info').where('panel_id=?', panel_list[i].panel_id).update({ ov: data.data[server_id] });
+                    if (Array.isArray(global.PanelList)) {
+                        global.PanelList.forEach((panel) => {
+                            if (panel.panel_id === panel_list[i].panel_id) panel.ov = data.data[server_id];
+                        });
+                    }
                 }
             }
-            return true;
+            resolve(true);
+            });
+        }).finally(() => {
+            this.panelOvPromise = null;
         });
-
+        return this.panelOvPromise;
     }
 
 
@@ -707,4 +719,3 @@ class UserService extends Service {
 
 UserService.toString = () => '[class UserService]';
 module.exports = UserService;
-

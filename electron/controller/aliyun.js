@@ -431,6 +431,36 @@ class AliyunController extends Controller {
     }
   }
 
+  async sms_sign_list(args, event) {
+    try { return pub.send_success(event, args.channel, await aliyunService.listSmsSigns(args.data.account_id, args.data)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async sms_sign_detail(args, event) {
+    try { return pub.send_success(event, args.channel, await aliyunService.getSmsSign(args.data.account_id, args.data.sign_name)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async sms_template_list(args, event) {
+    try { return pub.send_success(event, args.channel, await aliyunService.listSmsTemplates(args.data.account_id, args.data)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async sms_template_detail(args, event) {
+    try { return pub.send_success(event, args.channel, await aliyunService.getSmsTemplate(args.data.account_id, args.data.template_code)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async sms_send_statistics(args, event) {
+    try { return pub.send_success(event, args.channel, await aliyunService.querySmsSendStatistics(args.data.account_id, args.data)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async sms_send_details(args, event) {
+    try { return pub.send_success(event, args.channel, await aliyunService.querySmsSendDetails(args.data.account_id, args.data)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
   async oss_bucket_list(args, event) {
     try { return pub.send_success(event, args.channel, await aliyunService.listOssBuckets(args.data.account_id, args.data)); }
     catch (error) { return sendAliyunError(event, args.channel, error); }

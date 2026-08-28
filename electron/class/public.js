@@ -611,7 +611,10 @@ class Public {
      * @returns {void}
      */
     send(event,channel,data){
-        if (event.sender) event.sender.send(channel,data);
+        if (event && event.sender
+            && (typeof event.sender.isDestroyed !== 'function' || !event.sender.isDestroyed())) {
+            event.sender.send(channel,data);
+        }
     }
 
     /**
@@ -727,8 +730,9 @@ class Public {
      * @returns {string} 加密后的数据Base64
      */
     aes_encrypt(data,key,iv){
-        if(!data) return 
-        if(key.length!=16 || iv.length!=16) return
+        if(typeof data !== 'string' || !data) return
+        if(typeof key !== 'string' || typeof iv !== 'string'
+            || Buffer.byteLength(key, 'utf8') !== 16 || Buffer.byteLength(iv, 'utf8') !== 16) return
 
         let sKey = CryptoJS.enc.Utf8.parse(key);
         let sIv = CryptoJS.enc.Utf8.parse(iv);
@@ -752,8 +756,9 @@ class Public {
      * @returns {string} 解密后的数据
      */
     aes_decrypt(data,key,iv){
-        if(!data) return
-        if(key.length!=16 || iv.length!=16) return
+        if(typeof data !== 'string' || !data) return
+        if(typeof key !== 'string' || typeof iv !== 'string'
+            || Buffer.byteLength(key, 'utf8') !== 16 || Buffer.byteLength(iv, 'utf8') !== 16) return
         
         let sKey = CryptoJS.enc.Utf8.parse(key);
         let sIv = CryptoJS.enc.Utf8.parse(iv);
@@ -773,8 +778,8 @@ class Public {
      * @example aes_encrypt_ecb('123456','1234567890123456')
      */
     aes_encrypt_ecb(data,key){
-        if(!data) return
-        if(key.length!=16) return
+        if(typeof data !== 'string' || !data) return
+        if(typeof key !== 'string' || Buffer.byteLength(key, 'utf8') !== 16) return
 
         let sKey = CryptoJS.enc.Utf8.parse(key);
         let sContent = CryptoJS.enc.Utf8.parse(data);
@@ -795,8 +800,8 @@ class Public {
      * @example aes_decrypt_ecb(data,'1234567890123456')
      */
     aes_decrypt_ecb(data,key){
-        if(!data) return
-        if(key.length!=16) return
+        if(typeof data !== 'string' || !data) return
+        if(typeof key !== 'string' || Buffer.byteLength(key, 'utf8') !== 16) return
 
         let sKey = CryptoJS.enc.Utf8.parse(key);
         let decrypt = CryptoJS.AES.decrypt(data, sKey, {
@@ -933,9 +938,19 @@ class Public {
      * @returns {boolean}
      */
     parse_token(app_token) {
-        let token_str = this.base64_decode(app_token);
+        if(typeof app_token !== 'string' || !app_token) return false;
+
+        let token_str;
+        try {
+            token_str = this.base64_decode(app_token);
+        } catch (e) {
+            return false;
+        }
+        if(typeof token_str !== 'string' || !token_str) return false;
+
         let split_token = token_str.split('|');
-        if(split_token.length != 4) return false;
+        if(split_token.length != 4 || split_token.some((item) => typeof item !== 'string' || !item)) return false;
+        if(Buffer.byteLength(split_token[2], 'utf8') !== 16) return false;
 
         let result = {
         url: split_token[0],

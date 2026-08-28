@@ -55,6 +55,7 @@ module.exports = appInfo => {
 	config.logger = {
 		encoding: 'utf8',
 		level: 'INFO',
+		consoleLevel: 'NONE',
 		outputJSON: false,
 		buffer: true,
 		enablePerformanceTimer: false,
@@ -62,6 +63,7 @@ module.exports = appInfo => {
 		appLogName: 'app.log',
 		coreLogName: 'app-core.log',
 		errorLogName: 'app-error.log',
+		concentrateError: 'redirect',
 	};
 
 	/**

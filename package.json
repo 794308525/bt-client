@@ -1,6 +1,6 @@
 {
   "name": "bt-client",
-  "version": "1.2.9",
+  "version": "1.2.11",
   "description": "堡塔多机管理",
   "main": "main.js",
   "productName": "bt-client",
@@ -69,6 +69,7 @@
     "@alicloud/cdn20180510": "^9.2.0",
     "@alicloud/cms20190101": "^4.0.10",
     "@alicloud/domain20180129": "^5.1.0",
+    "@alicloud/dysmsapi20170525": "^4.6.0",
     "@alicloud/ecs20140526": "^7.9.6",
     "@alicloud/esa20240910": "^3.13.0",
     "@alicloud/swas-open20200601": "^4.0.0",
