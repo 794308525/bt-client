@@ -8,13 +8,22 @@
 		<div class="toolbox-layout">
 			<aside class="toolbox-sidebar">
 				<div class="toolbox-sidebar__title">{{ pub.lang('工具') }}</div>
-				<button class="toolbox-menu-item active" type="button">
+				<button class="toolbox-menu-item" :class="{ active: activeTool === 'ssl' }" type="button" @click="activeTool = 'ssl'">
 					<span class="toolbox-menu-item__icon"><el-icon><Lock /></el-icon></span>
 					<span>{{ pub.lang('SSL 证书') }}</span>
+				</button>
+				<button class="toolbox-menu-item" :class="{ active: activeTool === 'qps' }" type="button" @click="activeTool = 'qps'">
+					<span class="toolbox-menu-item__icon"><el-icon><DataAnalysis /></el-icon></span>
+					<span>QPS 测试</span>
+				</button>
+				<button class="toolbox-menu-item" :class="{ active: activeTool === 'site_check' }" type="button" @click="activeTool = 'site_check'">
+					<span class="toolbox-menu-item__icon"><el-icon><Monitor /></el-icon></span>
+					<span>站点检测</span>
 				</button>
 			</aside>
 
 			<main class="toolbox-content">
+				<template v-if="activeTool === 'ssl'">
 				<div class="toolbox-content__heading">
 					<div><h2>{{ pub.lang('SSL 证书') }}</h2><p>{{ pub.lang('统一申请、管理和下载多渠道证书') }}</p></div>
 				</div>
@@ -86,7 +95,10 @@
 						</div>
 						<el-empty v-else :description="pub.lang('暂未配置证书渠道')" />
 					</el-tab-pane>
-				</el-tabs>
+					</el-tabs>
+				</template>
+				<qps-tool v-else-if="activeTool === 'qps'" />
+				<site-check-tool v-else />
 			</main>
 		</div>
 
@@ -117,16 +129,18 @@
 					<div class="secret-block"><el-button size="small" class="secret-block__copy" @click="copyText(item.value)">{{ pub.lang('复制') }}</el-button><pre>{{ item.value || '--' }}</pre></div>
 				</el-tab-pane>
 			</el-tabs>
-		</el-dialog>
+			</el-dialog>
 	</div>
 </template>
 
 <script setup lang="ts">
-import { CopyDocument, Lock, Plus, Refresh, Search } from '@element-plus/icons-vue'
+import { CopyDocument, DataAnalysis, Lock, Monitor, Plus, Refresh, Search } from '@element-plus/icons-vue'
 import { ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { common, routes } from '@api/http'
 import { useMessage } from '@utils/hooks/message'
 import { pub } from '@utils/tools'
+import QpsTool from './components/QpsTool.vue'
+import SiteCheckTool from './components/SiteCheckTool.vue'
 
 interface Channel { channel_id: number; provider: string; channel_name: string; enabled: boolean; status: string; secret_masked: string; has_secret: boolean; website: string; last_check_time: number; last_error: string }
 interface Brand { key: string; name: string; points: number; description: string }
@@ -135,6 +149,7 @@ interface Certificate { certificate_key: string; channel_id: number; channel_nam
 interface Challenge { auth_type: string; host_record: string; host_full: string; value: string; domain: string; validated: string; hint: string }
 
 const Message = useMessage()
+const activeTool = ref<'ssl' | 'qps' | 'site_check'>('ssl')
 const request = (route: string, data: Record<string, unknown> = {}) => common.sendAsync({ route, data, timeout: 120000 }) as Promise<any>
 const activeSection = ref('manage')
 const channels = ref<Channel[]>([])
@@ -208,15 +223,15 @@ onMounted(async () => { await loadChannels(); await loadCertificates() })
 </script>
 
 <style scoped lang="scss">
-.toolbox-page { min-height: 100%; padding: 2rem 3.6rem 3.6rem; color: var(--el-text-color-primary); }
+.toolbox-page { box-sizing: border-box; display: flex; height: 100%; min-height: 0; padding: 2rem 3.6rem 3.6rem; color: var(--el-text-color-primary); flex-direction: column; }
 .toolbox-header { display: flex; align-items: center; gap: 1.2rem; margin-bottom: 2rem; h1 { margin: 0 0 .3rem; font-size: 2rem; font-weight: 650; } p { margin: 0; color: var(--el-text-color-secondary); font-size: 1.2rem; } }
 .toolbox-header__icon { display: grid; place-items: center; width: 4.4rem; height: 4.4rem; border-radius: 1.2rem; background: var(--el-color-primary-light-9); color: var(--el-color-primary); }
-.toolbox-layout { display: grid; grid-template-columns: 20rem minmax(0, 1fr); min-height: 64rem; border: 1px solid var(--el-border-color-light); border-radius: 1.2rem; overflow: hidden; background: var(--el-bg-color); }
-.toolbox-sidebar { padding: 1.6rem 1.2rem; border-right: 1px solid var(--el-border-color-light); background: var(--el-fill-color-extra-light); }
+.toolbox-layout { display: grid; min-height: 0; flex: 1; grid-template-columns: 20rem minmax(0, 1fr); border: 1px solid var(--el-border-color-light); border-radius: 1.2rem; overflow: hidden; background: var(--el-bg-color); }
+.toolbox-sidebar { min-height: 0; padding: 1.6rem 1.2rem; overflow-y: auto; border-right: 1px solid var(--el-border-color-light); background: var(--el-fill-color-extra-light); }
 .toolbox-sidebar__title { padding: 0 1rem 1rem; color: var(--el-text-color-secondary); font-size: 1.1rem; }
 .toolbox-menu-item { display: flex; align-items: center; gap: 1rem; width: 100%; height: 4rem; padding: 0 1rem; border: 0; border-radius: .8rem; background: transparent; color: var(--el-text-color-regular); font-size: 1.3rem; cursor: pointer; &.active { background: var(--el-color-primary-light-9); color: var(--el-color-primary); font-weight: 600; } }
 .toolbox-menu-item__icon { display: grid; place-items: center; font-size: 1.7rem; }
-.toolbox-content { min-width: 0; padding: 2.4rem; }
+.toolbox-content { min-width: 0; padding: 2.4rem; overflow: auto; }
 .toolbox-content__heading { padding-bottom: 1.4rem; border-bottom: 1px solid var(--el-border-color-lighter); h2 { margin: 0 0 .5rem; font-size: 1.8rem; } p { margin: 0; color: var(--el-text-color-secondary); font-size: 1.2rem; } }
 .ssl-tabs { margin-top: .4rem; :deep(.el-tabs__header) { margin-bottom: 2rem; } :deep(.el-tabs__item) { height: 4.8rem; padding: 0 2rem; font-size: 1.3rem; } }
 .ssl-toolbar, .ssl-toolbar__filters, .channel-heading, .channel-card, .channel-card__name, .channel-card__actions { display: flex; align-items: center; }

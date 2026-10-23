@@ -3,6 +3,8 @@ const { ContextMenu } = require('./class/menu.js');
 const { pub } = require('./class/public.js');
 const Electron = require('ee-core/electron');
 const { sslDeployService } = require('./service/ssl-deploy.js');
+const { qpsTaskManager } = require('./service/qps-task-manager.js');
+const { siteInspector } = require('./service/site-inspector.js');
 const { recordCheckService } = require('./service/dns-record-check.js');
 const { serverSshService } = require('./service/server-ssh.js');
 const { tencentSshService } = require('./service/tencent-ssh.js');
@@ -21,6 +23,13 @@ class Index extends Application {
    */
   async ready() {
     sslDeployService.start();
+    qpsTaskManager.recoverInterrupted();
+    siteInspector.recoverInterrupted();
+    this.toolboxRetentionTimer = setInterval(() => {
+      qpsTaskManager.cleanupExpired();
+      siteInspector.cleanupExpired();
+    }, 6 * 60 * 60 * 1000);
+    if (this.toolboxRetentionTimer.unref) this.toolboxRetentionTimer.unref();
   }
 
   /**
@@ -163,6 +172,8 @@ class Index extends Application {
     recordCheckService.stopAll();
     serverSshService.stopAll();
     tencentSshService.stopAll();
+    await Promise.all([qpsTaskManager.stopAll(), siteInspector.stopAll()]);
+    if (this.toolboxRetentionTimer) clearInterval(this.toolboxRetentionTimer);
     // 记忆当前窗口大小和位置
     let win = this.electron.mainWindow;
     if (!win.isMaximized()) {

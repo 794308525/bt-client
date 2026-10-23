@@ -945,6 +945,29 @@ const routes = {
 		esa_apply_list: { title: '获取 ESA 证书自动部署任务', method: 'ipc', path: 'controller.ssl.esa_apply_list' },
 		esa_apply_retry: { title: '重试 ESA 证书自动部署任务', method: 'ipc', path: 'controller.ssl.esa_apply_retry' },
 	},
+	qps: {
+		create: { title: '创建 QPS 测试任务', method: 'ipc', path: 'controller.qps.create' },
+		list: { title: '获取 QPS 测试记录', method: 'ipc', path: 'controller.qps.list' },
+		detail: { title: '获取 QPS 测试详情', method: 'ipc', path: 'controller.qps.detail' },
+		stop: { title: '停止 QPS 测试', method: 'ipc', path: 'controller.qps.stop' },
+		remove: { title: '删除 QPS 测试记录', method: 'ipc', path: 'controller.qps.remove' },
+		retry: { title: '重跑 QPS 测试', method: 'ipc', path: 'controller.qps.retry' },
+		retention: { title: '获取或设置工具箱记录保存时间', method: 'ipc', path: 'controller.qps.retention' },
+	},
+	site_check: {
+		// ee-core 会将 controller/site_check.js 的文件名转换为 siteCheck。
+		profiles: { title: '获取站点检测设备机型', method: 'ipc', path: 'controller.siteCheck.profiles' },
+		start: { title: '开始站点检测', method: 'ipc', path: 'controller.siteCheck.start' },
+		list: { title: '获取站点检测记录', method: 'ipc', path: 'controller.siteCheck.list' },
+		detail: { title: '获取站点检测详情', method: 'ipc', path: 'controller.siteCheck.detail' },
+		requests: { title: '获取站点检测请求明细', method: 'ipc', path: 'controller.siteCheck.requests' },
+		request_detail: { title: '获取站点检测请求详情', method: 'ipc', path: 'controller.siteCheck.request_detail' },
+		live: { title: '获取站点检测实时明细', method: 'ipc', path: 'controller.siteCheck.live' },
+		layout: { title: '调整站点检测窗口分栏', method: 'ipc', path: 'controller.siteCheck.layout' },
+		stop: { title: '停止站点检测', method: 'ipc', path: 'controller.siteCheck.stop' },
+		remove: { title: '删除站点检测记录', method: 'ipc', path: 'controller.siteCheck.remove' },
+		retention: { title: '获取或设置工具箱记录保存时间', method: 'ipc', path: 'controller.siteCheck.retention' },
+	},
 	term: {
 		list: {
 			title: '获取终端列表',

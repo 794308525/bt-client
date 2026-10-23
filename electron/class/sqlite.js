@@ -21,7 +21,7 @@ class Sqlite {
         this.JOIN = ''
         this.UNION = ''
         this.DISTINCT = ''
-        this.ENCRYPT_FIELDS = ['username','password','key_password','proxy_username','proxy_password','private_key','api_token','admin_path','server_id','access_key_id','access_key_secret','secret_id','secret_key']
+        this.ENCRYPT_FIELDS = ['username','password','key_password','proxy_username','proxy_password','private_key','api_token','admin_path','server_id','access_key_id','access_key_secret','secret_id','secret_key','request_headers','request_body','request_headers_json','request_body_text','response_headers','response_body']
         this.NOT_CLONE = false
 
 
@@ -69,6 +69,44 @@ class Sqlite {
             this.checkField('cloudflare_account', 'sort', 'INTEGER', '0')
             this.checkField('cloudflare_account', 'zone_count', 'INTEGER', '-1')
             this.checkField('cloudflare_account', 'cloudflare_account_id', 'TEXT', '""')
+            const qpsTaskFields = [
+                ['mode', 'TEXT', '"fixed"'], ['max_qps', 'REAL', '0'],
+                ['extreme_initial_qps', 'REAL', '10'], ['extreme_growth_factor', 'REAL', '1.5'],
+                ['extreme_warmup_seconds', 'INTEGER', '10'], ['extreme_measure_seconds', 'INTEGER', '30'],
+                ['extreme_confirm_seconds', 'INTEGER', '300'], ['extreme_max_error_rate', 'REAL', '0.01'],
+                ['extreme_min_success_rate', 'REAL', '0.95'], ['extreme_min_issued_rate', 'REAL', '0.98'],
+                ['extreme_p95_limit_ms', 'INTEGER', '1000'], ['current_phase', 'TEXT', '"fixed"'],
+                ['current_stage', 'INTEGER', '0'], ['current_target_qps', 'REAL', '0'],
+                ['lower_qps', 'REAL', '0'], ['upper_qps', 'REAL', '0'], ['final_stable_qps', 'REAL', '0'],
+                ['scheduled_count', 'INTEGER', '0'], ['issued_count', 'INTEGER', '0'],
+                ['success_qps', 'REAL', '0'], ['issued_rate', 'REAL', '0'],
+                ['limit_kind', 'TEXT', '""'], ['limit_reason', 'TEXT', '""'],
+            ]
+            qpsTaskFields.forEach(field => this.checkField('qps_test_task', field[0], field[1], field[2]))
+            const qpsSampleFields = [
+                ['stage_no', 'INTEGER', '0'], ['phase', 'TEXT', '"fixed"'], ['target_qps', 'REAL', '0'],
+                ['scheduled_count', 'INTEGER', '0'], ['issued_count', 'INTEGER', '0'], ['success_qps', 'REAL', '0'],
+                ['issued_rate', 'REAL', '0'], ['error_rate', 'REAL', '0'], ['concurrency_limited_count', 'INTEGER', '0'],
+                ['generator_limited_count', 'INTEGER', '0'], ['pump_lag_ms', 'REAL', '0'],
+            ]
+            qpsSampleFields.forEach(field => this.checkField('qps_test_sample', field[0], field[1], field[2]))
+            const qpsStageFields = [
+                ['kind', 'TEXT', '"probe"'], ['latency_degraded', 'INTEGER', '0'],
+            ]
+            qpsStageFields.forEach(field => this.checkField('qps_test_stage', field[0], field[1], field[2]))
+            // 站点检测详情表在旧版本中可能已由任务表创建但尚未包含全部字段。
+            const detailFields = [
+                ['request_id', 'INTEGER', '0'], ['task_id', 'INTEGER', '0'],
+                ['request_headers', 'TEXT', '"{}"'], ['request_body', 'TEXT', '""'],
+                ['request_body_base64', 'INTEGER', '0'], ['request_body_status', 'TEXT', '"none"'],
+                ['response_headers', 'TEXT', '"{}"'], ['response_body', 'TEXT', '""'],
+                ['response_body_base64', 'INTEGER', '0'], ['response_body_status', 'TEXT', '"none"'],
+                ['response_body_size', 'INTEGER', '0'], ['response_mime_type', 'TEXT', '""'],
+                ['capture_status', 'TEXT', '"unavailable"'], ['capture_error', 'TEXT', '""'],
+                ['status_code', 'INTEGER', '0'], ['encoded_size', 'INTEGER', '0'], ['decoded_size', 'INTEGER', '0'],
+                ['timing_json', 'TEXT', '"{}"'], ['security_json', 'TEXT', '"{}"'], ['created_at', 'INTEGER', '0'],
+            ]
+            detailFields.forEach(field => this.checkField('site_check_request_detail', field[0], field[1], field[2]))
             IS_CHECK_TABLE.status = true
         }
         
@@ -449,6 +487,219 @@ class Sqlite {
         if (this.DB_OBJ.prepare(sql).run()){
             console.log('创建[ssl_deploy_task]表成功')
         }
+
+        // QPS 测试仅记录任务摘要和每秒统计，不保存每一个发压请求，避免本地数据库无限膨胀。
+        sql = `CREATE TABLE IF NOT EXISTS qps_test_task (
+            \`task_id\` INTEGER PRIMARY KEY AUTOINCREMENT,
+            \`name\` TEXT DEFAULT "",
+            \`url\` TEXT DEFAULT "",
+            \`method\` TEXT DEFAULT "GET",
+            \`preset\` TEXT DEFAULT "recommended",
+            \`request_headers\` TEXT DEFAULT "{}",
+            \`request_body\` TEXT DEFAULT "",
+            \`mode\` TEXT DEFAULT "fixed",
+            \`max_qps\` REAL DEFAULT 0,
+            \`extreme_initial_qps\` REAL DEFAULT 10,
+            \`extreme_growth_factor\` REAL DEFAULT 1.5,
+            \`extreme_warmup_seconds\` INTEGER DEFAULT 10,
+            \`extreme_measure_seconds\` INTEGER DEFAULT 30,
+            \`extreme_confirm_seconds\` INTEGER DEFAULT 300,
+            \`extreme_max_error_rate\` REAL DEFAULT 0.01,
+            \`extreme_min_success_rate\` REAL DEFAULT 0.95,
+            \`extreme_min_issued_rate\` REAL DEFAULT 0.98,
+            \`extreme_p95_limit_ms\` INTEGER DEFAULT 1000,
+            \`target_qps\` REAL DEFAULT 0,
+            \`concurrency\` INTEGER DEFAULT 1,
+            \`duration_seconds\` INTEGER DEFAULT 60,
+            \`timeout_ms\` INTEGER DEFAULT 10000,
+            \`keep_alive\` INTEGER DEFAULT 1,
+            \`follow_redirects\` INTEGER DEFAULT 1,
+            \`ignore_tls_errors\` INTEGER DEFAULT 0,
+            \`status\` TEXT DEFAULT "pending",
+            \`started_at\` INTEGER DEFAULT 0,
+            \`ended_at\` INTEGER DEFAULT 0,
+            \`total_count\` INTEGER DEFAULT 0,
+            \`success_count\` INTEGER DEFAULT 0,
+            \`failed_count\` INTEGER DEFAULT 0,
+            \`timeout_count\` INTEGER DEFAULT 0,
+            \`dropped_count\` INTEGER DEFAULT 0,
+            \`total_bytes\` INTEGER DEFAULT 0,
+            \`avg_latency_ms\` REAL DEFAULT 0,
+            \`p95_latency_ms\` REAL DEFAULT 0,
+            \`max_latency_ms\` REAL DEFAULT 0,
+            \`actual_qps\` REAL DEFAULT 0,
+            \`current_phase\` TEXT DEFAULT "fixed",
+            \`current_stage\` INTEGER DEFAULT 0,
+            \`current_target_qps\` REAL DEFAULT 0,
+            \`lower_qps\` REAL DEFAULT 0,
+            \`upper_qps\` REAL DEFAULT 0,
+            \`final_stable_qps\` REAL DEFAULT 0,
+            \`scheduled_count\` INTEGER DEFAULT 0,
+            \`issued_count\` INTEGER DEFAULT 0,
+            \`success_qps\` REAL DEFAULT 0,
+            \`issued_rate\` REAL DEFAULT 0,
+            \`limit_kind\` TEXT DEFAULT "",
+            \`limit_reason\` TEXT DEFAULT "",
+            \`status_codes\` TEXT DEFAULT "{}",
+            \`error_summary\` TEXT DEFAULT "{}",
+            \`last_error\` TEXT DEFAULT "",
+            \`created_at\` INTEGER DEFAULT 0,
+            \`updated_at\` INTEGER DEFAULT 0
+        )`
+        if (this.DB_OBJ.prepare(sql).run()) console.log('创建[qps_test_task]表成功')
+
+        sql = `CREATE TABLE IF NOT EXISTS qps_test_sample (
+            \`sample_id\` INTEGER PRIMARY KEY AUTOINCREMENT,
+            \`task_id\` INTEGER NOT NULL,
+            \`second_offset\` INTEGER DEFAULT 0,
+            \`stage_no\` INTEGER DEFAULT 0,
+            \`phase\` TEXT DEFAULT "fixed",
+            \`target_qps\` REAL DEFAULT 0,
+            \`scheduled_count\` INTEGER DEFAULT 0,
+            \`issued_count\` INTEGER DEFAULT 0,
+            \`sent_count\` INTEGER DEFAULT 0,
+            \`completed_count\` INTEGER DEFAULT 0,
+            \`success_count\` INTEGER DEFAULT 0,
+            \`failed_count\` INTEGER DEFAULT 0,
+            \`active_count\` INTEGER DEFAULT 0,
+            \`actual_qps\` REAL DEFAULT 0,
+            \`success_qps\` REAL DEFAULT 0,
+            \`issued_rate\` REAL DEFAULT 0,
+            \`error_rate\` REAL DEFAULT 0,
+            \`concurrency_limited_count\` INTEGER DEFAULT 0,
+            \`generator_limited_count\` INTEGER DEFAULT 0,
+            \`pump_lag_ms\` REAL DEFAULT 0,
+            \`avg_latency_ms\` REAL DEFAULT 0,
+            \`p95_latency_ms\` REAL DEFAULT 0,
+            \`total_bytes\` INTEGER DEFAULT 0,
+            \`created_at\` INTEGER DEFAULT 0
+        )`
+        if (this.DB_OBJ.prepare(sql).run()) console.log('创建[qps_test_sample]表成功')
+
+        sql = `CREATE TABLE IF NOT EXISTS qps_test_stage (
+            \`stage_id\` INTEGER PRIMARY KEY AUTOINCREMENT,
+            \`task_id\` INTEGER NOT NULL,
+            \`stage_no\` INTEGER NOT NULL,
+            \`kind\` TEXT DEFAULT "probe",
+            \`phase\` TEXT DEFAULT "warmup",
+            \`target_qps\` REAL DEFAULT 0,
+            \`warmup_seconds\` INTEGER DEFAULT 10,
+            \`measure_seconds\` INTEGER DEFAULT 30,
+            \`confirm_seconds\` INTEGER DEFAULT 300,
+            \`scheduled_count\` INTEGER DEFAULT 0,
+            \`issued_count\` INTEGER DEFAULT 0,
+            \`completed_count\` INTEGER DEFAULT 0,
+            \`success_count\` INTEGER DEFAULT 0,
+            \`failed_count\` INTEGER DEFAULT 0,
+            \`success_qps\` REAL DEFAULT 0,
+            \`issued_rate\` REAL DEFAULT 0,
+            \`error_rate\` REAL DEFAULT 0,
+            \`avg_latency_ms\` REAL DEFAULT 0,
+            \`p95_latency_ms\` REAL DEFAULT 0,
+            \`max_latency_ms\` REAL DEFAULT 0,
+            \`latency_degraded\` INTEGER DEFAULT 0,
+            \`limit_kind\` TEXT DEFAULT "",
+            \`limit_reason\` TEXT DEFAULT "",
+            \`pump_lag_ms\` REAL DEFAULT 0,
+            \`status\` TEXT DEFAULT "running",
+            \`started_at\` INTEGER DEFAULT 0,
+            \`ended_at\` INTEGER DEFAULT 0,
+            \`created_at\` INTEGER DEFAULT 0
+        )`
+        if (this.DB_OBJ.prepare(sql).run()) console.log('创建[qps_test_stage]表成功')
+
+        sql = `CREATE TABLE IF NOT EXISTS site_check_task (
+            \`task_id\` INTEGER PRIMARY KEY AUTOINCREMENT,
+            \`input_url\` TEXT DEFAULT "",
+            \`final_url\` TEXT DEFAULT "",
+            \`device_key\` TEXT DEFAULT "iphone_x",
+            \`device_name\` TEXT DEFAULT "iPhone X",
+            \`profile_json\` TEXT DEFAULT "{}",
+            \`status\` TEXT DEFAULT "pending",
+            \`timeout_seconds\` INTEGER DEFAULT 60,
+            \`started_at\` INTEGER DEFAULT 0,
+            \`ended_at\` INTEGER DEFAULT 0,
+            \`dom_content_loaded_ms\` REAL DEFAULT 0,
+            \`load_ms\` REAL DEFAULT 0,
+            \`request_count\` INTEGER DEFAULT 0,
+            \`failed_count\` INTEGER DEFAULT 0,
+            \`total_transfer_size\` INTEGER DEFAULT 0,
+            \`total_decoded_size\` INTEGER DEFAULT 0,
+            \`last_error\` TEXT DEFAULT "",
+            \`created_at\` INTEGER DEFAULT 0,
+            \`updated_at\` INTEGER DEFAULT 0
+        )`
+        if (this.DB_OBJ.prepare(sql).run()) console.log('创建[site_check_task]表成功')
+
+        sql = `CREATE TABLE IF NOT EXISTS site_check_request (
+            \`request_id\` INTEGER PRIMARY KEY AUTOINCREMENT,
+            \`task_id\` INTEGER NOT NULL,
+            \`request_key\` TEXT DEFAULT "",
+            \`redirect_index\` INTEGER DEFAULT 0,
+            \`sequence\` INTEGER DEFAULT 0,
+            \`url\` TEXT DEFAULT "",
+            \`host\` TEXT DEFAULT "",
+            \`method\` TEXT DEFAULT "GET",
+            \`resource_type\` TEXT DEFAULT "Other",
+            \`mime_type\` TEXT DEFAULT "",
+            \`file_type\` TEXT DEFAULT "",
+            \`status_code\` INTEGER DEFAULT 0,
+            \`protocol\` TEXT DEFAULT "",
+            \`remote_ip\` TEXT DEFAULT "",
+            \`from_cache\` INTEGER DEFAULT 0,
+            \`start_offset_ms\` REAL DEFAULT 0,
+            \`duration_ms\` REAL DEFAULT 0,
+            \`dns_ms\` REAL DEFAULT 0,
+            \`connect_ms\` REAL DEFAULT 0,
+            \`ssl_ms\` REAL DEFAULT 0,
+            \`ttfb_ms\` REAL DEFAULT 0,
+            \`download_ms\` REAL DEFAULT 0,
+            \`transfer_size\` INTEGER DEFAULT 0,
+            \`decoded_size\` INTEGER DEFAULT 0,
+            \`priority\` TEXT DEFAULT "",
+            \`initiator\` TEXT DEFAULT "",
+            \`error_text\` TEXT DEFAULT "",
+            \`created_at\` INTEGER DEFAULT 0
+        )`
+        if (this.DB_OBJ.prepare(sql).run()) console.log('创建[site_check_request]表成功')
+
+        // 站点检测请求详情与摘要一一对应。正文按服务层限制保存，敏感字段沿用本地 AES 加密。
+        sql = `CREATE TABLE IF NOT EXISTS site_check_request_detail (
+            \`detail_id\` INTEGER PRIMARY KEY AUTOINCREMENT,
+            \`request_id\` INTEGER NOT NULL UNIQUE,
+            \`task_id\` INTEGER NOT NULL,
+            \`request_headers\` TEXT DEFAULT "{}",
+            \`request_body\` TEXT DEFAULT "",
+            \`request_body_base64\` INTEGER DEFAULT 0,
+            \`request_body_status\` TEXT DEFAULT "none",
+            \`response_headers\` TEXT DEFAULT "{}",
+            \`response_body\` TEXT DEFAULT "",
+            \`response_body_base64\` INTEGER DEFAULT 0,
+            \`response_body_status\` TEXT DEFAULT "none",
+            \`response_body_size\` INTEGER DEFAULT 0,
+            \`response_mime_type\` TEXT DEFAULT "",
+            \`capture_status\` TEXT DEFAULT "unavailable",
+            \`capture_error\` TEXT DEFAULT "",
+            \`status_code\` INTEGER DEFAULT 0,
+            \`encoded_size\` INTEGER DEFAULT 0,
+            \`decoded_size\` INTEGER DEFAULT 0,
+            \`timing_json\` TEXT DEFAULT "{}",
+            \`security_json\` TEXT DEFAULT "{}",
+            \`created_at\` INTEGER DEFAULT 0
+        )`
+        if (this.DB_OBJ.prepare(sql).run()) console.log('创建[site_check_request_detail]表成功')
+
+        this.DB_OBJ.prepare('CREATE INDEX IF NOT EXISTS idx_qps_test_task_created ON qps_test_task(created_at DESC)').run()
+        this.DB_OBJ.prepare('CREATE INDEX IF NOT EXISTS idx_qps_test_task_status ON qps_test_task(status)').run()
+        this.DB_OBJ.prepare('CREATE INDEX IF NOT EXISTS idx_qps_test_sample_task_second ON qps_test_sample(task_id, second_offset)').run()
+        this.DB_OBJ.prepare('CREATE INDEX IF NOT EXISTS idx_qps_test_stage_task_no ON qps_test_stage(task_id, stage_no)').run()
+        this.DB_OBJ.prepare('CREATE INDEX IF NOT EXISTS idx_site_check_task_created ON site_check_task(created_at DESC)').run()
+        this.DB_OBJ.prepare('CREATE INDEX IF NOT EXISTS idx_site_check_task_status ON site_check_task(status)').run()
+        this.DB_OBJ.prepare('CREATE INDEX IF NOT EXISTS idx_site_check_request_task_sequence ON site_check_request(task_id, sequence)').run()
+        this.DB_OBJ.prepare('CREATE INDEX IF NOT EXISTS idx_site_check_request_task_duration ON site_check_request(task_id, duration_ms)').run()
+        this.DB_OBJ.prepare('CREATE INDEX IF NOT EXISTS idx_site_check_request_task_size ON site_check_request(task_id, transfer_size)').run()
+        this.DB_OBJ.prepare('CREATE INDEX IF NOT EXISTS idx_site_check_request_task_type ON site_check_request(task_id, resource_type)').run()
+        this.DB_OBJ.prepare('CREATE INDEX IF NOT EXISTS idx_site_check_request_detail_task ON site_check_request_detail(task_id, request_id)').run()
 
 
         for (const table of ['aliyun_ssh_credential', 'tencent_ssh_credential']) {

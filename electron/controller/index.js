@@ -170,6 +170,8 @@ class IndexController extends Controller {
         pub.M('tencent_account').decryptAll();
         pub.M('cloudflare_account').decryptAll();
         pub.M('ssl_channel').decryptAll();
+        pub.M('site_check_request_detail').decryptAll();
+        pub.M('qps_test_task').decryptAll();
 
         // 保存密码加密方式
         if(!pub.C('init_password') || pub.C('not_password') === true){
@@ -190,6 +192,8 @@ class IndexController extends Controller {
         pub.M('tencent_account').encryptAll();
         pub.M('cloudflare_account').encryptAll();
         pub.M('ssl_channel').encryptAll();
+        pub.M('site_check_request_detail').encryptAll();
+        pub.M('qps_test_task').encryptAll();
         
         return pub.send_success_msg(event,channel,pub.lang('管理密码设置成功'))
     }
