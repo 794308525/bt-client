@@ -1,6 +1,6 @@
 {
   "name": "bt-client",
-  "version": "1.2.11",
+  "version": "1.2.13",
   "description": "堡塔多机管理",
   "main": "main.js",
   "productName": "bt-client",
