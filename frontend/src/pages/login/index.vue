@@ -61,6 +61,7 @@
 				<el-divider direction="vertical" />
 				<a class="link" href="https://www.bt.cn/bbs" target="_blank">{{ pub.lang('问题反馈') }}</a>
 			</div>
+			<LegalDocuments class="login-legal" />
 		</el-card>
 	</div>
 </template>
@@ -72,6 +73,7 @@ import { useMessage } from '@utils/hooks/message'
 import { RouteLocationRaw, useRouter } from 'vue-router'
 import { common, routes } from '@api/http'
 import { pub } from '@utils/tools'
+import LegalDocuments from '@/components/LegalDocuments/index.vue'
 
 const router = useRouter()
 const useStore = useUserStore()
@@ -119,6 +121,9 @@ const login = async () => {
 </script>
 
 <style lang="scss" scoped>
+.login-legal {
+	margin-top: 1.6rem;
+}
 .login-wrapper {
 	position: fixed;
 	left: 50%;

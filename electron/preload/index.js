@@ -30,18 +30,11 @@ module.exports = async () => {
       pub.log(pub.lang('代理服务器已启动: {}:{}',global.socks.address,global.socks.port))
   });
 
-  // 统计
-  Services.get('user').total();
-
   // 免登录
   if(pub.C('not_password') === true){
       global.password_hash = pub.C('password_hash');
       global.socks.syncProxy(); // 同步代理池
       Services.get('user').getPanelOv(); // 同步面板信息
-
-      // 从云端同步面板和SSH信息
-      Services.get('user').syncPanelFromCloud();
-      Services.get('user').syncSshFromCloud();
   }
 
 }

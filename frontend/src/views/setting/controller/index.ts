@@ -1,16 +1,4 @@
 import { common, routes } from '@api/http'
-import { useMessage } from '@utils/hooks/message'
-
-/**
- * @description 手动同步
- */
-export async function handle_sync() {
-	const res = await common.sendAsync({
-		route: routes.index.manual_sync.path,
-		data: {},
-	})
-	useMessage().request(res)
-}
 
 /**
  * @description 保存设置页面的配置

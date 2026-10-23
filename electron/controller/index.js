@@ -245,15 +245,7 @@ class IndexController extends Controller {
      */
     async set_sync_password(args,event) {
         let channel = args.channel;
-        let password = args.data.password;
-        if(!password){
-            return pub.send_error_msg(event,channel,pub.lang('同步密码不能为空'))
-        }
-        let password_hash = pub.md5(pub.md5(password))
-        pub.C('sync_password',password_hash)
-        Services.get('user').syncPanelToCloud();
-        Services.get('user').syncSshToCloud();
-        return pub.send_success_msg(event,channel,pub.lang('设置成功'))
+        return pub.send_error_msg(event,channel,pub.lang('宝塔账号数据同步功能已停用'));
     }
 
 
@@ -284,10 +276,6 @@ class IndexController extends Controller {
         global.socks.syncProxy(); // 同步代理池
         Services.get('user').getPanelOv(); // 同步面板信息
 
-        // 从云端同步面板和SSH信息
-        Services.get('user').syncPanelFromCloud();
-        Services.get('user').syncSshFromCloud();
-
         return pub.send_success_msg(event,channel,pub.lang('密码正确'))
 		}
 		/**
@@ -298,9 +286,7 @@ class IndexController extends Controller {
 		 */
 		async manual_sync(args, event) { 
 			let channel = args.channel;
-			Services.get('user').syncPanelToCloud();
-			Services.get('user').syncSshToCloud();
-			return pub.send_success_msg(event, channel, pub.lang('同步成功'));
+			return pub.send_error_msg(event, channel, pub.lang('宝塔账号数据同步功能已停用'));
 		}
 
     /**
@@ -316,7 +302,6 @@ class IndexController extends Controller {
             data = {
                 max_common_use:10,
                 language:"zh",
-                sync_cloud:false,
                 exit_action:"exit"
             }
         }
@@ -325,17 +310,13 @@ class IndexController extends Controller {
             data.exit_action = "exit";
         }
 
-        if(data.sync_cloud == undefined){
-            data.sync_cloud = false;
-        }
-
         if(data.not_password == undefined){
             data.not_password = false;
         }
 
-        if(data.sync_password == undefined){
-            data.sync_password = "";
-        }
+        // 不再向前端提供已停用的同步设置及密码。
+        delete data.sync_cloud;
+        delete data.sync_password;
 
         data.version = pub.getVersion();
 
@@ -356,12 +337,10 @@ class IndexController extends Controller {
         let channel = args.channel;
         let key = args.data.key;
         let value = args.data.value;
-        pub.config_set(key,value);
-        // 开启同步时，同步面板和SSH信息
-        if(key == 'sync_cloud' && value == true){
-            Services.get('user').syncPanelToCloud();
-            Services.get('user').syncSshToCloud();
+        if(key === 'sync_cloud' || key === 'sync_password'){
+            return pub.send_error_msg(event,channel,pub.lang('宝塔账号数据同步功能已停用'));
         }
+        pub.config_set(key,value);
         return pub.send_success_msg(event,channel,pub.lang('设置成功'))
     }
 

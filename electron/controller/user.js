@@ -113,41 +113,7 @@ class UserController extends Controller {
      * @param {object} event
      */
     sync_panel_to_cloud(args, event) {
-        let channel = args.channel;
-
-        // 请求数据
-        let pdata = {
-            token: 'xxxxxxxx', // 32位token
-            data: 'xxxxxx' // 加密后的JSON数据，加密算法：AES-128-CBC
-            // key = secret_key 中的偶数位
-            // iv = secret_key 中的奇数位
-            // data = base64(en_aes_cbc(JSON.stringify(pdata), key, iv))
-
-            // 加密前的数据格式
-            // {
-            //     "uid":1,
-            //     "action":"add/modify/sync", // add:新增，modify:修改，sync:同步（先删空）
-            //     "data":["加密数据，此数据无需解密，一行一条根据操作类型存入数据库即可"]
-            // }
-        }
-
-
-
-        // 请求到云端
-        // 要求返回数据格式
-        // {
-        //     "status":true,
-        //     "msg":"操作成功",
-        //     "data":"xxxx" // 加密后的返回数据，加密算法：AES-128-CBC，key和iv同上
-        // }
-
-        // let url = 'https://www.bt.cn/api/PcClient/sync_panel';
-        // pub.http_post(url,pdata,function(response,error){
-            
-        // })
-
-        return pdata
-
+        return pub.send_error_msg(event,args.channel,pub.lang('宝塔账号数据同步功能已停用'));
     }
 
 
@@ -157,30 +123,10 @@ class UserController extends Controller {
      * @param {object} event
      */
     get_panel_from_cloud(args, event) {
-        let channel = args.channel;
-
-        // 请求数据
-        let pdata = {
-            token: 'xxxxxxxx', // 32位token
-            data: 'xxxxxx' // 加密后的JSON数据，加密算法：AES-256-CBC
-        }
-
-        // 请求到云端
-        // 要求返回数据格式
-        // {
-        //     "status":true,
-        //     "msg":"操作成功",
-        //     "data":"xxxx" // 加密后的返回数据，加密算法：AES-256-CBC，key和iv同上
-        // }
-
-
-
+        return pub.send_error_msg(event,args.channel,pub.lang('宝塔账号数据同步功能已停用'));
     }
-
-
-
 
 }
 
 UserController.toString = () => '[class UserController]';
-module.exports = UserController;  
+module.exports = UserController;

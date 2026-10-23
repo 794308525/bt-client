@@ -1,118 +1,172 @@
 <template>
-	<div class="pt-[2.4rem] px-[3.6rem] setting-style">
-		<h1>{{ pub.lang('设置') }}</h1>
-		<el-divider></el-divider>
-		<el-form label-width="auto" size="large">
-			<el-form-item :label="pub.lang('账号')">
-				<el-input v-model="account" class="!w-[28rem] mr-4" disabled />
-				<el-button type="primary" @click="handleUnbind">{{
-					pub.lang(info.username ? '解绑' : '绑定')
-				}}</el-button>
-			</el-form-item>
-			<el-form-item :label="pub.lang('同步至云端')">
-				<el-switch v-model="configData.sync_cloud" @change="hanelCloudSync" />
-				<el-button size="small" @click="handleSyncPassword" class="ml-8">{{
-					pub.lang('同步密码')
-				}}</el-button>
-				<el-button
-					size="small"
-					:disabled="!configData.sync_cloud"
-					@click="handle_sync"
-					class="ml-8"
-					>{{ pub.lang('手动同步') }}</el-button
-				>
-				<span class="ml-8 help-text-color">{{
-					pub.lang('*开启同步后，同一账号及同步密码的其他设备将自动接收本设备的增量数据')
-				}}</span>
-			</el-form-item>
-			<el-form-item :label="pub.lang('免密登录')">
-				<el-switch v-model="configData.not_password" @change="hanelNotPassword" />
-				<el-button size="small" @click="handleEditManage" class="ml-8">{{
-					pub.lang('修改管理密码')
-				}}</el-button>
-				<span class="ml-8 help-text-color">{{
-					pub.lang('*开启免密登录后，无需每次打开应用时输入管理密码')
-				}}</span>
-			</el-form-item>
-			<el-form-item :label="pub.lang('主题颜色')">
-				<el-radio-group v-model="Theme" @change="handleTheme">
-					<el-radio value="lightMode">{{ pub.lang('明亮模式') }}</el-radio>
-					<el-radio value="darkMode">{{ pub.lang('暗黑模式') }}</el-radio>
-				</el-radio-group>
-			</el-form-item>
-			<el-form-item :label="pub.lang('关闭按钮')">
-				<el-radio-group v-model="configData.exit_action" @change="handleExit">
-					<el-radio value="close">{{ pub.lang('最小化到系统托盘') }}</el-radio>
-					<el-radio value="exit">{{ pub.lang('关闭应用') }}</el-radio>
-				</el-radio-group>
-			</el-form-item>
-			<el-form-item :label="pub.lang('当前版本')">
-				<span>{{ configData.version }}</span>
-				<!-- <el-button class="ml-8" size="small" @click="handelCheckUpdate">{{ pub.lang('检查更新') }}</el-button> -->
-			</el-form-item>
-			<el-form-item :label="pub.lang('系统语言')">
-				<el-select v-model="languageType" style="width: 10rem" @change="handleLang">
-					<el-option
-						v-for="item in languageList"
-						:key="item.name"
-						:label="item.title"
-						:value="item.name"></el-option>
-				</el-select>
-			</el-form-item>
-		</el-form>
-		<h1 class="mt-[4rem]">{{ pub.lang('阿里云缓存') }}</h1>
-		<el-divider></el-divider>
-		<div class="aliyun-cache">
-			<div class="aliyun-cache__summary">
-				<div><span>{{ pub.lang('当前占用') }}</span><strong>{{ formatBytes(cacheInfo.used_bytes) }} / {{ cacheInfo.max_mb }} MB</strong></div>
-				<div><span>{{ pub.lang('缓存条目') }}</span><strong>{{ cacheInfo.entries }} {{ pub.lang('条') }}</strong></div>
-				<div><span>{{ pub.lang('保留时间') }}</span><strong>{{ cacheInfo.retention_days }} {{ pub.lang('天') }}</strong></div>
-			</div>
-			<el-progress :percentage="cacheUsagePercentage" :show-text="false" :stroke-width="8" />
-			<div class="aliyun-cache__actions">
-				<span>{{ pub.lang('容量上限') }}</span>
-				<el-input-number v-model="cacheLimitMb" :min="20" :max="2048" :step="50" :precision="0" controls-position="right" />
-				<span>MB</span>
-				<el-button :loading="cacheSaving" @click="saveCacheLimit">{{ pub.lang('保存') }}</el-button>
-				<el-button type="danger" plain :loading="cacheClearing" :disabled="!cacheInfo.entries" @click="clearAliyunCache">{{ pub.lang('清理缓存') }}</el-button>
-			</div>
-			<p>{{ pub.lang('仅缓存 ESA 热门 URL 和 URL 用量的聚合结果，不保存原始日志、下载地址或 AccessKey。超过 7 天或容量上限时自动删除最旧数据。') }}</p>
-		</div>
-		<h1 class="mt-[4rem]">{{ pub.lang('代理池') }}</h1>
-		<el-divider></el-divider>
-		<el-button type="primary" size="large" @click="handleAddProxy" class="mb-[2rem]">{{
-			pub.lang('添加代理')
-		}}</el-button>
+	<div class="setting-style">
+		<el-tabs v-model="activeTab" class="setting-tabs">
+			<el-tab-pane :label="pub.lang('设置')" name="setting">
+				<div class="settings-content">
+					<!-- 暂时隐藏宝塔账号绑定入口，保留原有绑定逻辑和数据。 -->
+					<section v-if="false" class="setting-section" aria-labelledby="account-heading">
+						<header class="setting-section__header">
+							<h2 id="account-heading">{{ pub.lang('账号') }}</h2>
+						</header>
+						<div class="setting-row">
+							<div class="setting-row__info">
+								<h3>{{ pub.lang('宝塔账号') }}</h3>
+								<p class="account-value">{{ account }}</p>
+							</div>
+							<div class="setting-row__actions">
+								<el-button @click="handleUnbind">{{ pub.lang(info.username ? '解绑' : '绑定') }}</el-button>
+							</div>
+						</div>
+					</section>
 
-		<el-table
-			:data="proxyList"
-			style="width: 650px"
-			height="280"
-			:empty-text="pub.lang('暂无数据')">
-			<el-table-column prop="proxy_name" :label="pub.lang('名称')"></el-table-column>
-			<el-table-column prop="proxy_ip" :label="pub.lang('IP')" width="120"></el-table-column>
-			<el-table-column prop="proxy_port" :label="pub.lang('端口')" width="80"></el-table-column>
-			<el-table-column prop="proxy_type" :label="pub.lang('类型')" width="80">
-				<template #default="{ row }">
-					{{ row.proxy_type === 0 ? 'HTTP' : row.proxy_type === 1 ? 'HTTPS' : 'SOCKS5' }}
-				</template>
-			</el-table-column>
-			<el-table-column :label="pub.lang('操作')" align="right" width="120">
-				<template #default="{ row }">
-					<el-button link size="small" type="primary" @click="editProxy(row)">{{
-						pub.lang('编辑')
-					}}</el-button>
-					<el-button link size="small" type="primary" @click="removeProxy(row)">{{
-						pub.lang('删除')
-					}}</el-button>
-				</template>
-			</el-table-column>
-		</el-table>
+					<section class="setting-section" aria-labelledby="general-heading">
+						<header class="setting-section__header">
+							<h2 id="general-heading">{{ pub.lang('通用设置') }}</h2>
+						</header>
+						<div class="setting-row">
+							<div class="setting-row__info">
+								<h3>{{ pub.lang('免密登录') }}</h3>
+								<p>{{ pub.lang('开启后，无需每次打开应用时输入管理密码。') }}</p>
+							</div>
+							<div class="setting-row__actions">
+								<el-switch
+									v-model="configData.not_password"
+									:aria-label="pub.lang('免密登录')"
+									@change="hanelNotPassword" />
+								<el-button @click="handleEditManage">{{ pub.lang('修改管理密码') }}</el-button>
+							</div>
+						</div>
+						<div class="setting-row">
+							<div class="setting-row__info">
+								<h3>{{ pub.lang('主题颜色') }}</h3>
+							</div>
+							<div class="setting-row__actions">
+								<el-radio-group v-model="Theme" :aria-label="pub.lang('主题颜色')" @change="handleTheme">
+									<el-radio value="lightMode">{{ pub.lang('明亮模式') }}</el-radio>
+									<el-radio value="darkMode">{{ pub.lang('暗黑模式') }}</el-radio>
+								</el-radio-group>
+							</div>
+						</div>
+						<div class="setting-row">
+							<div class="setting-row__info">
+								<h3>{{ pub.lang('关闭按钮') }}</h3>
+							</div>
+							<div class="setting-row__actions">
+								<el-radio-group
+									v-model="configData.exit_action"
+									:aria-label="pub.lang('关闭按钮')"
+									@change="handleExit">
+									<el-radio value="close">{{ pub.lang('最小化到系统托盘') }}</el-radio>
+									<el-radio value="exit">{{ pub.lang('关闭应用') }}</el-radio>
+								</el-radio-group>
+							</div>
+						</div>
+						<div class="setting-row">
+							<div class="setting-row__info">
+								<h3>{{ pub.lang('系统语言') }}</h3>
+							</div>
+							<div class="setting-row__actions">
+								<el-select
+									v-model="languageType"
+									class="language-select"
+									:aria-label="pub.lang('系统语言')"
+									@change="handleLang">
+									<el-option
+										v-for="item in languageList"
+										:key="item.name"
+										:label="item.title"
+										:value="item.name" />
+								</el-select>
+							</div>
+						</div>
+					</section>
+
+					<section class="setting-section" aria-labelledby="cache-heading">
+						<header class="setting-section__header">
+							<h2 id="cache-heading">{{ pub.lang('阿里云缓存') }}</h2>
+						</header>
+						<div class="cache-overview">
+							<dl class="cache-stats">
+								<div>
+									<dt>{{ pub.lang('当前占用') }}</dt>
+									<dd>{{ formatBytes(cacheInfo.used_bytes) }} <span>/ {{ cacheInfo.max_mb }} MB</span></dd>
+								</div>
+								<div>
+									<dt>{{ pub.lang('缓存条目') }}</dt>
+									<dd>{{ cacheInfo.entries }} <span>{{ pub.lang('条') }}</span></dd>
+								</div>
+								<div>
+									<dt>{{ pub.lang('保留时间') }}</dt>
+									<dd>{{ cacheInfo.retention_days }} <span>{{ pub.lang('天') }}</span></dd>
+								</div>
+							</dl>
+							<el-progress :percentage="cacheUsagePercentage" :show-text="false" :stroke-width="6" />
+							<p class="cache-note">{{ pub.lang('仅缓存 ESA 热门 URL 和 URL 用量的聚合结果，不保存原始日志、下载地址或 AccessKey。超过 7 天或容量上限时自动删除最旧数据。') }}</p>
+						</div>
+						<div class="setting-row">
+							<div class="setting-row__info">
+								<h3>{{ pub.lang('容量上限') }}</h3>
+							</div>
+							<div class="setting-row__actions">
+								<div class="cache-limit">
+									<el-input-number
+										v-model="cacheLimitMb"
+										:min="20"
+										:max="2048"
+										:step="50"
+										:precision="0"
+										:aria-label="pub.lang('容量上限（MB）')"
+										controls-position="right" />
+									<span>MB</span>
+								</div>
+								<el-button :loading="cacheSaving" @click="saveCacheLimit">{{ pub.lang('保存') }}</el-button>
+								<el-button
+									type="danger"
+									plain
+									:loading="cacheClearing"
+									:disabled="!cacheInfo.entries"
+									@click="clearAliyunCache">{{ pub.lang('清理缓存') }}</el-button>
+							</div>
+						</div>
+					</section>
+
+					<section class="setting-section" aria-labelledby="proxy-heading">
+						<header class="setting-section__header">
+							<h2 id="proxy-heading">{{ pub.lang('代理池') }}</h2>
+							<el-button type="primary" @click="handleAddProxy">{{ pub.lang('添加代理') }}</el-button>
+						</header>
+						<div class="proxy-table">
+							<el-table :data="proxyList" style="width: 100%" :max-height="280" :empty-text="pub.lang('暂无数据')">
+								<el-table-column prop="proxy_name" :label="pub.lang('名称')" min-width="160" show-overflow-tooltip />
+								<el-table-column prop="proxy_ip" :label="pub.lang('IP')" min-width="160" show-overflow-tooltip />
+								<el-table-column prop="proxy_port" :label="pub.lang('端口')" width="80" />
+								<el-table-column prop="proxy_type" :label="pub.lang('类型')" width="90">
+									<template #default="{ row }">
+										{{ row.proxy_type === 0 ? 'HTTP' : row.proxy_type === 1 ? 'HTTPS' : 'SOCKS5' }}
+									</template>
+								</el-table-column>
+								<el-table-column :label="pub.lang('操作')" align="right" width="120">
+									<template #default="{ row }">
+										<el-button link size="small" type="primary" @click="editProxy(row)">{{ pub.lang('编辑') }}</el-button>
+										<el-button link size="small" type="primary" @click="removeProxy(row)">{{ pub.lang('删除') }}</el-button>
+									</template>
+								</el-table-column>
+							</el-table>
+						</div>
+					</section>
+				</div>
+			</el-tab-pane>
+			<el-tab-pane :label="pub.lang('关于')" name="about" lazy>
+				<About :version="configData.version" />
+			</el-tab-pane>
+			<el-tab-pane :label="pub.lang('更新记录')" name="changelog" lazy>
+				<Changelog :version="configData.version" />
+			</el-tab-pane>
+		</el-tabs>
 
 		<!-- 添加、编辑代理 -->
 		<addProxy ref="proxyRef" @refresh="getProxyList" />
 		<NotPassword ref="notpwRef" @close="configData.not_password = false" @refresh="getConfig" />
-		<SyncPassword ref="syncpwRef" @refresh="getConfig" />
 	</div>
 </template>
 
@@ -126,11 +180,11 @@ import { common, routes } from '@api/http'
 import { useMessage } from '@utils/hooks/message'
 import addProxy from './components/addProxy.vue'
 import NotPassword from './components/notPassword.vue'
-import SyncPassword from './components/syncPassword.vue'
+import About from './components/about.vue'
+import Changelog from './components/changelog.vue'
 import { useLanguage } from '@plugins/language'
 import { useTheme } from '@/plugins/theme'
 import { pub,formatTime } from '@utils/tools'
-import { handle_sync } from './controller'
 
 const router = useRouter()
 const Message = useMessage() // 消息提示
@@ -142,12 +196,12 @@ const useUStore = useUserStore()
 const { dark } = storeToRefs(useStore)
 const { info, isLogin } = storeToRefs(useUStore)
 const Theme = ref('lightMode')
+const activeTab = ref('setting')
 
 const proxyRef = ref()
 const languageList = ref(window.languageList.languages)
 const languageType = ref(window.languageList.current)
 const notpwRef = ref()
-const syncpwRef = ref()
 const panelInfo = ref({})
 const proxyList = ref([])
 const cacheSaving = ref(false)
@@ -156,14 +210,10 @@ const cacheLimitMb = ref(100)
 const cacheInfo = reactive({ entries: 0, used_bytes: 0, max_bytes: 100 * 1024 * 1024, max_mb: 100, retention_days: 7 })
 const cacheUsagePercentage = computed(() => cacheInfo.max_bytes ? Math.min(100, Math.round(cacheInfo.used_bytes / cacheInfo.max_bytes * 100)) : 0)
 const configData: {
-	sync_cloud: boolean
 	exit_action: string
 	not_password: boolean
-	sync_password: string
 	version: string
 } = reactive({
-	sync_cloud: false, // 同步至云端
-	sync_password: '', // 同步密码
 	exit_action: 'close', // 关闭按钮
 	not_password: false, // 免密登录
 	version: '',
@@ -179,35 +229,11 @@ const account = computed(() => {
 // 获取配置信息
 const getConfig = () => {
 	common.send(routes.index.get_config.path, {}, (result: any) => {
-		const { sync_cloud, sync_password, exit_action, not_password, version } = result.data
-		configData.sync_cloud = (sync_cloud && sync_password != '') || false
-		configData.sync_password = sync_password
+		const { exit_action, not_password, version } = result.data
 		configData.exit_action = exit_action || 'close'
 		configData.not_password = not_password || false
 		configData.version = version
 	})
-}
-// 同步至云端
-const hanelCloudSync = async () => {
-	if (!isLogin.value) {
-		Message.error(pub.lang('请绑定宝塔账号后再开启同步至云端'))
-		configData.sync_cloud = false
-		return
-	}
-	if (!configData.sync_password) {
-		configData.sync_cloud = false
-		syncpwRef.value.acceptParams()
-		return
-	}
-	const res: any = await setConfig('sync_cloud', configData.sync_cloud)
-	Message.request(res)
-	if (!res.status) {
-		configData.sync_cloud = !configData.sync_cloud
-	}
-}
-// 同步密码
-const handleSyncPassword = () => {
-	syncpwRef.value.acceptParams()
 }
 // 设置免密登录
 const hanelNotPassword = async (val: any) => {
@@ -351,15 +377,179 @@ onMounted(async () => {
 </script>
 
 <style scoped lang="scss">
-.aliyun-cache { width: min(72rem, 100%); padding: 1.4rem 1.6rem; border: 1px solid var(--el-border-color-lighter); border-radius: .8rem; background: var(--el-bg-color); }
-.aliyun-cache__summary { display: grid; margin-bottom: 1.2rem; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.2rem; div { display: flex; flex-direction: column; gap: .35rem; } span { color: var(--el-text-color-secondary); } strong { font-size: 1.2rem; font-weight: 600; } }
-.aliyun-cache__actions { display: flex; margin-top: 1.2rem; align-items: center; gap: .8rem; .el-input-number { width: 15rem; } }
-.aliyun-cache > p { margin: 1rem 0 0; color: var(--el-text-color-placeholder); font-size: 1rem; }
-// .setting-style {
-// :deep(.el-from) {
-// 	.el-form .el-form-item__label {
-// 		font-size: inherit !important;
-// 	}
-// }
-// }
+.setting-style {
+	max-width: 112rem;
+	padding: 2.4rem 3.6rem 3.6rem;
+	color: var(--el-text-color-primary);
+}
+.setting-tabs {
+	:deep(.el-tabs__header) {
+		height: 4rem;
+		margin-bottom: 2.4rem;
+	}
+	:deep(.el-tabs__item) {
+		height: 4rem !important;
+		line-height: 4rem;
+		font-size: 1.4rem;
+	}
+	:deep(.el-tabs__content) {
+		padding: 0 !important;
+		overflow: visible;
+	}
+}
+.settings-content {
+	display: grid;
+	gap: 2rem;
+}
+.setting-section {
+	min-width: 0;
+	overflow: hidden;
+	border: 1px solid var(--el-border-color);
+	border-radius: 0.8rem;
+	background: var(--el-bg-color);
+}
+.setting-section__header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 1.6rem;
+	min-height: 5.6rem;
+	padding: 1.2rem 2rem;
+	background: var(--el-fill-color-light);
+
+	h2 {
+		margin: 0;
+		font-size: 1.4rem;
+		font-weight: 600;
+		line-height: 2.4rem;
+	}
+}
+.setting-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 2.4rem;
+	min-height: 6.8rem;
+	padding: 1.6rem 2rem;
+	border-top: 1px solid var(--el-border-color-lighter);
+}
+.setting-row__info {
+	flex: 1;
+	min-width: 0;
+
+	h3 {
+		margin: 0;
+		font-size: 1.3rem;
+		font-weight: 500;
+		line-height: 2rem;
+	}
+	p {
+		max-width: 44rem;
+		margin: 0.4rem 0 0;
+		color: var(--el-text-color-regular);
+		font-size: 1.2rem;
+		line-height: 1.7;
+		overflow-wrap: anywhere;
+	}
+	.account-value {
+		user-select: text;
+	}
+}
+.setting-row__actions {
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: flex-end;
+	flex-wrap: wrap;
+	gap: 0.8rem;
+	max-width: 100%;
+
+	:deep(.el-button + .el-button) {
+		margin-left: 0;
+	}
+	:deep(.el-radio-group) {
+		gap: 0.4rem 1.6rem;
+	}
+	:deep(.el-radio) {
+		margin-right: 0;
+	}
+}
+.language-select {
+	width: 14rem;
+}
+.cache-overview {
+	padding: 1.8rem 2rem;
+	border-top: 1px solid var(--el-border-color-lighter);
+}
+.cache-stats {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 1.6rem;
+	margin: 0 0 1.6rem;
+
+	dt {
+		color: var(--el-text-color-regular);
+		font-size: 1.2rem;
+		line-height: 2rem;
+	}
+	dd {
+		margin: 0.6rem 0 0;
+		font-size: 1.6rem;
+		font-weight: 600;
+		line-height: 2.4rem;
+		overflow-wrap: anywhere;
+	}
+	span {
+		color: var(--el-text-color-regular);
+		font-size: 1.2rem;
+		font-weight: 400;
+	}
+}
+.cache-note {
+	margin: 1.2rem 0 0;
+	color: var(--el-text-color-regular);
+	font-size: 1.2rem;
+	line-height: 1.7;
+}
+.cache-limit {
+	display: flex;
+	align-items: center;
+	gap: 0.8rem;
+
+	.el-input-number {
+		width: 14rem;
+	}
+}
+.proxy-table {
+	padding: 0 2rem 2rem;
+}
+@media (max-width: 800px) {
+	.setting-style {
+		padding: 1.6rem 2rem 2.4rem;
+	}
+	.setting-row {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 1.2rem;
+	}
+	.setting-row__actions {
+		justify-content: flex-start;
+	}
+}
+@media (max-width: 600px) {
+	.cache-stats {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 1rem;
+
+		> div {
+			display: flex;
+			align-items: baseline;
+			justify-content: space-between;
+			gap: 1.6rem;
+		}
+		dd {
+			margin: 0;
+		}
+	}
+}
 </style>
