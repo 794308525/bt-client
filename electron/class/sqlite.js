@@ -21,7 +21,7 @@ class Sqlite {
         this.JOIN = ''
         this.UNION = ''
         this.DISTINCT = ''
-        this.ENCRYPT_FIELDS = ['username','password','proxy_username','proxy_password','private_key','api_token','admin_path','server_id','access_key_id','access_key_secret','secret_key']
+        this.ENCRYPT_FIELDS = ['username','password','key_password','proxy_username','proxy_password','private_key','api_token','admin_path','server_id','access_key_id','access_key_secret','secret_key']
         this.NOT_CLONE = false
 
 
@@ -422,6 +422,28 @@ class Sqlite {
             console.log('创建[ssl_deploy_task]表成功')
         }
 
+
+        for (const table of ['aliyun_ssh_credential', 'tencent_ssh_credential']) {
+            sql = `CREATE TABLE IF NOT EXISTS ${table} (
+            credential_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id INTEGER NOT NULL,
+            source TEXT NOT NULL,
+            region_id TEXT NOT NULL,
+            instance_id TEXT NOT NULL,
+            host TEXT NOT NULL,
+            port INTEGER DEFAULT 22,
+            username TEXT DEFAULT "",
+            auth_type INTEGER DEFAULT 0,
+            password TEXT DEFAULT "",
+            private_key TEXT DEFAULT "",
+            key_password TEXT DEFAULT "",
+            host_fingerprint TEXT DEFAULT "",
+            proxy_id INTEGER DEFAULT 0,
+            update_time INTEGER DEFAULT 0,
+            UNIQUE(account_id, source, region_id, instance_id)
+        )`
+            this.DB_OBJ.prepare(sql).run()
+        }
 
         sql = `CREATE TABLE IF NOT EXISTS ssh_info (
             \`ssh_id\` INTEGER PRIMARY KEY AUTOINCREMENT,  -- SSH ID

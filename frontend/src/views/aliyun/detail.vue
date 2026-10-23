@@ -67,6 +67,7 @@
 
 		<el-tabs v-model="activeTab" class="resource-tabs" @tab-change="handleTabChange">
 			<el-tab-pane name="servers" class="server-pane">
+				<ServerAllowance :account-id="accountId" :active="activeTab === 'servers'" :server-revision="serverRevision" :server-error="serverLoadError" />
 				<div class="resource-toolbar">
 					<div class="resource-toolbar__filters">
 						<el-input v-model="serverQuery.keyword" clearable :prefix-icon="Search" :placeholder="pub.lang('搜索名称、实例 ID 或 IP')" />
@@ -77,7 +78,7 @@
 						</el-select>
 						<el-select v-model="serverQuery.region" :placeholder="pub.lang('地域')">
 							<el-option :label="pub.lang('全部地域')" value="all" />
-							<el-option v-for="region in serverRegions" :key="region" :label="region" :value="region" />
+							<el-option v-for="region in serverRegions" :key="region.value" :label="region.label" :value="region.value" />
 						</el-select>
 						<el-select v-model="serverQuery.status" :placeholder="pub.lang('状态')">
 							<el-option :label="pub.lang('全部状态')" value="all" />
@@ -101,65 +102,39 @@
 					show-icon
 					:closable="false"
 					class="resource-alert" />
-				<div class="server-table-wrap">
-				<el-table :data="pagedServers" v-loading="serverLoading" row-key="instance_id" height="100%">
-					<el-table-column :label="pub.lang('实例')" min-width="220">
-						<template #default="{ row }">
-							<div class="instance-name">{{ row.name }}</div>
-							<div class="muted mono">{{ row.instance_id }}</div>
-						</template>
-					</el-table-column>
-					<el-table-column :label="pub.lang('类型')" width="130">
-						<template #default="{ row }"><el-tag>{{ row.source === 'ecs' ? 'ECS' : pub.lang('轻量') }}</el-tag></template>
-					</el-table-column>
-					<el-table-column prop="region_id" :label="pub.lang('地域')" width="150" />
-					<el-table-column :label="pub.lang('IP 地址')" min-width="190">
-						<template #default="{ row }">
-							<template v-if="showServerIp">
-								<div v-for="ip in row.public_ips" :key="`public-${ip}`" class="server-ip">
-									<span>{{ ip }}</span>
-									<el-tooltip :content="pub.lang('复制IP')" placement="top">
-										<el-button link :icon="CopyDocument" class="server-ip__copy" @click.stop="copyServerIp(ip)" />
-									</el-tooltip>
+				<div v-loading="serverLoading" class="server-card-scroll">
+					<div v-if="pagedServers.length" class="server-card-grid">
+						<article v-for="server in pagedServers" :key="serverTrafficKey(server)" class="server-card">
+							<div class="server-card__header">
+								<span class="server-card__icon"><el-icon><Monitor /></el-icon></span>
+								<div class="server-card__identity">
+									<strong :title="server.name">{{ server.name }}</strong>
+									<span class="mono" :title="server.instance_id">{{ server.instance_id }}</span>
 								</div>
-								<div v-for="ip in row.private_ips" :key="`private-${ip}`" class="server-ip muted">
-									<span>{{ ip }}</span>
-									<el-tooltip :content="pub.lang('复制IP')" placement="top">
-										<el-button link :icon="CopyDocument" class="server-ip__copy" @click.stop="copyServerIp(ip)" />
-									</el-tooltip>
-								</div>
-								<span v-if="!row.public_ips.length && !row.private_ips.length">--</span>
-							</template>
-							<span v-else class="muted">{{ pub.lang('IP已隐藏') }}</span>
-						</template>
-					</el-table-column>
-					<el-table-column :label="pub.lang('配置')" min-width="190">
-						<template #default="{ row }">
-							<el-tooltip
-								v-if="row.instance_type"
-								:content="`${pub.lang('实例规格')}：${row.instance_type}`"
-								placement="top">
-								<div class="server-spec">{{ formatComputeSpec(row) }}</div>
+								<el-tag class="server-status" size="small" :type="serverStatusType(server.status)">{{ serverStatusName(server.status) }}</el-tag>
+							</div>
+							<div class="server-card__meta"><el-tag size="small" effect="plain">{{ server.source === 'ecs' ? 'ECS' : pub.lang('轻量') }}</el-tag><span :title="server.region_id">{{ server.region_name || server.region_id }}</span><span class="server-card__os" :title="`${pub.lang('系统')}：${server.os_name || server.os_type || '--'}`">{{ server.os_name || server.os_type || '--' }}</span></div>
+							<div class="server-card__specs">
+								<div :title="server.instance_type ? `${pub.lang('实例规格')}：${server.instance_type}` : ''"><span>{{ pub.lang('配置') }}</span><strong>{{ formatComputeSpec(server) }}</strong></div>
+								<div><span>{{ pub.lang('带宽') }}</span><strong>{{ formatNumber(server.bandwidth_mbps || 0) }} Mbps</strong></div>
+								<div><span>{{ pub.lang('磁盘') }}</span><strong>{{ server.disk_gb === null ? '--' : `${formatNumber(server.disk_gb)} GB` }}</strong></div>
+							</div>
+							<div v-if="showServerIp" class="server-card__ips">
+									<div v-for="ip in server.public_ips" :key="`public-${ip}`" class="server-ip"><span class="server-ip__label">{{ pub.lang('公网') }}</span><span class="mono">{{ ip }}</span><el-tooltip :content="pub.lang('复制IP')" placement="top"><el-button link :icon="CopyDocument" class="server-ip__copy" @click.stop="copyServerIp(ip)" /></el-tooltip></div>
+									<div v-for="ip in server.private_ips" :key="`private-${ip}`" class="server-ip muted"><span class="server-ip__label">{{ pub.lang('内网') }}</span><span class="mono">{{ ip }}</span><el-tooltip :content="pub.lang('复制IP')" placement="top"><el-button link :icon="CopyDocument" class="server-ip__copy" @click.stop="copyServerIp(ip)" /></el-tooltip></div>
+									<span v-if="!server.public_ips.length && !server.private_ips.length" class="muted">{{ pub.lang('IP 地址') }} --</span>
+							</div>
+							<el-tooltip :content="serverTrafficHint(server)" placement="top" :show-after="400">
+								<button type="button" class="server-traffic-card" @click.stop="openServerTraffic(server)">
+									<div class="server-traffic-card__heading"><span>{{ pub.lang('流量') }}</span><span class="inbound">↓ {{ pub.lang('入站') }}</span><span class="outbound">↑ {{ pub.lang('出站') }}</span></div>
+									<div v-for="period in serverTrafficPeriods" :key="period.key" class="server-traffic-card__row" :class="{ 'server-traffic-card__row--month': period.key === 'this_month' }"><span>{{ pub.lang(period.label) }}</span><strong class="inbound">{{ formatServerTraffic(serverTraffic[serverTrafficKey(server)]?.[period.key]?.in_bytes) }}</strong><strong class="outbound">{{ formatServerTraffic(serverTraffic[serverTrafficKey(server)]?.[period.key]?.out_bytes) }}</strong></div>
+									<div class="server-traffic-card__footer"><span>{{ serverTrafficLoading ? pub.lang('更新中…') : serverTrafficStatus(server) }}</span><span>{{ pub.lang('近 30 天') }} ›</span></div>
+								</button>
 							</el-tooltip>
-							<div v-else class="server-spec">{{ formatComputeSpec(row) }}</div>
-							<div class="server-spec__secondary">{{ formatStorageSpec(row) }}</div>
-						</template>
-					</el-table-column>
-					<el-table-column :label="pub.lang('系统')" min-width="160">
-						<template #default="{ row }">{{ row.os_name || row.os_type || '--' }}</template>
-					</el-table-column>
-					<el-table-column prop="status" :label="pub.lang('状态')" width="110">
-						<template #default="{ row }"><el-tag class="server-status" :type="serverStatusType(row.status)">{{ serverStatusName(row.status) }}</el-tag></template>
-					</el-table-column>
-					<el-table-column :label="pub.lang('到期时间')" width="140">
-						<template #default="{ row }">{{ row.expired_time ? formatExpireDate(row.expired_time) : '--' }}</template>
-					</el-table-column>
-					<el-table-column :label="pub.lang('操作')" width="110" fixed="right">
-						<template #default="{ row }">
-							<el-button link type="primary" :icon="Monitor" :loading="openingServerId === row.instance_id" @click="openServer(row)">{{ pub.lang('终端') }}</el-button>
-						</template>
-					</el-table-column>
-				</el-table>
+							<div class="server-card__footer"><span>{{ pub.lang('到期') }} {{ server.expired_time ? formatExpireDate(server.expired_time) : '--' }}</span><el-button type="primary" plain size="small" :icon="Monitor" :loading="openingServerId === server.instance_id" @click="openServer(server)">{{ pub.lang('终端') }}</el-button></div>
+						</article>
+					</div>
+					<el-empty v-else-if="!serverLoading" :image-size="80" :description="servers.length ? pub.lang('没有匹配的服务器') : pub.lang('暂无服务器')" />
 				</div>
 				<div class="pagination"><el-pagination v-model:current-page="serverPage" :page-size="20" layout="total, prev, pager, next" :total="filteredServers.length" /></div>
 			</el-tab-pane>
@@ -205,14 +180,15 @@
 								</div>
 							</div>
 							<div class="record-toolbar__actions">
-								<el-input v-model="recordKeyword" clearable :prefix-icon="Search" :placeholder="pub.lang(recordType === 'all' ? '搜索解析记录' : '搜索主机记录')" @keydown.enter="loadRecords(1)" />
+								<el-input v-model="recordKeyword" clearable :prefix-icon="Search" :placeholder="pub.lang('搜索主机名、IP 或记录值')" @keydown.enter="loadRecords(1)" @clear="loadRecords(1)" />
 								<el-select v-model="recordType" :placeholder="pub.lang('记录类型')" @change="loadRecords(1)">
 									<el-option :label="pub.lang('全部类型')" value="all" />
 									<el-option v-for="type in recordTypes" :key="type" :label="type" :value="type" />
 								</el-select>
+								<el-button :icon="Search" :disabled="!selectedDomain || !domainRecordsWritable || recordLoading || recordBatchLoading" @click="openRecordCheck('dns')">{{ pub.lang('一键检测') }}</el-button>
 								<el-button :disabled="!selectedRecords.length || recordBatchLoading" @click="batchRecordAction('disable')">{{ pub.lang('批量暂停') }}</el-button>
 								<el-button type="danger" plain :disabled="!selectedRecords.length || recordBatchLoading" @click="batchRecordAction('delete')">{{ pub.lang('批量删除') }}</el-button>
-								<el-button :icon="Refresh" :disabled="!selectedDomain || !domainRecordsWritable" @click="loadRecords(recordPage)" />
+								<el-button :icon="Refresh" :disabled="!selectedDomain || !domainRecordsWritable" @click="loadRecords(recordPage, true)" />
 								<el-button :icon="Clock" :disabled="!selectedDomain || !domainRecordsWritable" @click="openRecordLogs">{{ pub.lang('操作记录') }}</el-button>
 								<el-button v-if="domainCanOpenEsa" @click="openSelectedDomainInEsa">{{ pub.lang('查看 ESA 站点') }}</el-button>
 								<el-button type="primary" :icon="Plus" :disabled="!selectedDomain || !domainRecordsWritable" @click="openRecordDialog()">{{ pub.lang('新增解析') }}</el-button>
@@ -227,7 +203,9 @@
 						<div class="record-table-wrap">
 							<el-table :data="records" v-loading="recordLoading || recordBatchLoading" row-key="record_id" height="100%" @selection-change="selectedRecords = $event">
 								<el-table-column type="selection" width="46" :selectable="isRecordSelectable" />
-								<el-table-column prop="rr" label="RR" width="110" />
+								<el-table-column prop="rr" :label="pub.lang('主机记录')" min-width="210">
+									<template #default="{ row }"><div class="record-hostname"><span :title="dnsHostname(row)">{{ dnsHostname(row) }}</span><el-tooltip :content="copiedHostname === dnsHostname(row) ? pub.lang('已复制') : pub.lang('复制完整域名')" placement="top"><el-button link :icon="copiedHostname === dnsHostname(row) ? Check : CopyDocument" :type="copiedHostname === dnsHostname(row) ? 'success' : 'default'" :aria-label="pub.lang('复制完整域名')" @click.stop="copyRecordHostname(dnsHostname(row))" /></el-tooltip></div></template>
+								</el-table-column>
 								<el-table-column prop="type" :label="pub.lang('类型')" width="90" />
 								<el-table-column prop="value" :label="pub.lang('记录值')" min-width="180" show-overflow-tooltip />
 								<el-table-column prop="ttl" label="TTL" width="90" />
@@ -245,8 +223,9 @@
 										</el-tooltip>
 									</template>
 								</el-table-column>
-								<el-table-column :label="pub.lang('操作')" width="120" fixed="right">
+								<el-table-column :label="pub.lang('操作')" width="170" fixed="right">
 									<template #default="{ row }">
+										<el-tooltip :content="previewHostnameTip(dnsHostname(row))" :disabled="canPreviewHostname(dnsHostname(row))" placement="top"><el-button link type="primary" :disabled="!canPreviewHostname(dnsHostname(row))" @click="previewRecordWebsite(dnsHostname(row))">{{ pub.lang('预览') }}</el-button></el-tooltip>
 										<el-button link type="primary" :disabled="row.locked || !domainRecordsWritable" @click="openRecordDialog(row)">{{ pub.lang('编辑') }}</el-button>
 										<el-button link type="danger" :disabled="row.locked || !domainRecordsWritable" @click="removeRecord(row)">{{ pub.lang('删除') }}</el-button>
 									</template>
@@ -311,29 +290,38 @@
 							</header>
 
 							<el-tabs v-model="esaDetailTab" class="esa-detail-tabs" @tab-change="handleEsaDetailTabChange">
-								<el-tab-pane :label="pub.lang('流量分析')" name="analytics">
-									<TrafficAnalytics v-if="selectedEsaSite" :account-id="accountId" product="esa" :site-id="selectedEsaSite.site_id" />
-								</el-tab-pane>
 								<el-tab-pane :label="pub.lang('解析记录')" name="records">
+									<div class="esa-record-quota" :class="{ 'is-full': esaRecordQuotaPercentage === 100 }">
+										<div class="esa-record-quota__summary">
+											<span>{{ pub.lang('解析记录') }} <strong>{{ esaRecordSiteTotal ?? '--' }} / {{ esaDetailLoading ? '…' : esaRecordQuota?.limit ?? '--' }}</strong> {{ pub.lang('条') }} <el-tooltip :content="esaRecordQuotaTip" placement="top"><el-icon><InfoFilled /></el-icon></el-tooltip></span>
+											<span v-if="esaRecordQuotaReady">{{ pub.lang(esaRecordQuotaPercentage === 100 ? '已达上限' : esaRecordQuotaPercentage >= 80 ? '接近上限' : '站点用量') }}</span>
+											<span v-else>{{ pub.lang(esaDetailLoading || esaRecordLoading ? '正在读取额度…' : esaRecordQuota?.status === 'known' ? '用量未确认' : '上限未确认') }}</span>
+										</div>
+										<el-progress v-if="esaRecordQuotaReady" :percentage="esaRecordQuotaPercentage" :status="esaRecordQuotaPercentage === 100 ? 'exception' : esaRecordQuotaPercentage >= 80 ? 'warning' : undefined" :stroke-width="5" :show-text="false" />
+									</div>
 									<div class="esa-content-toolbar">
 										<div class="esa-record-filters">
-											<el-input v-model="esaRecordKeyword" clearable :prefix-icon="Search" :placeholder="pub.lang('搜索主机记录或记录值')" @keydown.enter="loadEsaRecords(1)" />
+											<el-input v-model="esaRecordKeyword" clearable :prefix-icon="Search" :placeholder="pub.lang('搜索主机名、IP 或记录值')" @keydown.enter="loadEsaRecords(1)" @clear="loadEsaRecords(1)" />
 											<el-select v-model="esaRecordType" @change="loadEsaRecords(1)">
 												<el-option :label="pub.lang('全部类型')" value="all" />
 												<el-option v-for="type in esaRecordTypes" :key="type" :label="type" :value="type" />
 											</el-select>
 										</div>
 									<div class="esa-record-actions">
+										<el-button :icon="Search" :disabled="!selectedEsaSite || esaRecordLoading || esaRecordBatchLoading" @click="openRecordCheck('esa')">{{ pub.lang('一键检测') }}</el-button>
+										<el-button :icon="Download" :loading="esaRecordExporting" :disabled="esaRecordLoading || esaRecordBatchLoading" @click="openEsaExportDialog">{{ pub.lang('导出') }}</el-button>
 										<el-button :disabled="!selectedEsaRecords.length || esaRecordBatchLoading" @click="batchEsaRecordAction('disable_proxy')">{{ pub.lang('批量关闭代理') }}</el-button>
 										<el-button type="danger" plain :disabled="!selectedEsaRecords.length || esaRecordBatchLoading" @click="batchEsaRecordAction('delete')">{{ pub.lang('批量删除') }}</el-button>
-										<el-button :icon="Refresh" :loading="esaRecordLoading" @click="loadEsaRecords(esaRecordPage)" />
+										<el-button :icon="Refresh" :loading="esaRecordLoading || esaDetailLoading" @click="refreshEsaRecords" />
 										<el-button type="primary" :icon="Plus" @click="openEsaRecordDialog()">{{ pub.lang('新增解析') }}</el-button>
 									</div>
 									</div>
 									<div class="record-table-wrap">
 									<el-table :data="esaRecords" v-loading="esaRecordLoading || esaRecordBatchLoading" row-key="record_id" height="100%" @selection-change="selectedEsaRecords = $event">
 										<el-table-column type="selection" width="46" />
-										<el-table-column prop="record_name" :label="pub.lang('主机记录')" min-width="180" show-overflow-tooltip />
+										<el-table-column prop="record_name" :label="pub.lang('主机记录')" min-width="210">
+											<template #default="{ row }"><div class="record-hostname"><span :title="esaHostname(row)">{{ esaHostname(row) }}</span><el-tooltip :content="copiedHostname === esaHostname(row) ? pub.lang('已复制') : pub.lang('复制完整域名')" placement="top"><el-button link :icon="copiedHostname === esaHostname(row) ? Check : CopyDocument" :type="copiedHostname === esaHostname(row) ? 'success' : 'default'" :aria-label="pub.lang('复制完整域名')" @click.stop="copyRecordHostname(esaHostname(row))" /></el-tooltip></div></template>
+										</el-table-column>
 										<el-table-column prop="type" :label="pub.lang('类型')" width="90" />
 										<el-table-column prop="value" :label="pub.lang('记录值')" min-width="210" show-overflow-tooltip />
 										<el-table-column :label="pub.lang('代理')" width="80">
@@ -345,8 +333,9 @@
 										</el-table-column>
 										<el-table-column prop="ttl" label="TTL" width="90"><template #default="{ row }">{{ row.ttl || '--' }}</template></el-table-column>
 										<el-table-column prop="comment" :label="pub.lang('备注')" min-width="140" show-overflow-tooltip />
-										<el-table-column :label="pub.lang('操作')" width="120" fixed="right">
+										<el-table-column :label="pub.lang('操作')" width="170" fixed="right">
 											<template #default="{ row }">
+												<el-tooltip :content="previewHostnameTip(esaHostname(row))" :disabled="canPreviewHostname(esaHostname(row))" placement="top"><el-button link type="primary" :disabled="!canPreviewHostname(esaHostname(row))" @click="previewRecordWebsite(esaHostname(row))">{{ pub.lang('预览') }}</el-button></el-tooltip>
 												<el-button link type="primary" :disabled="!esaRecordEditable(row)" @click="openEsaRecordDialog(row)">{{ pub.lang('编辑') }}</el-button>
 												<el-button link type="danger" @click="removeEsaRecord(row)">{{ pub.lang('删除') }}</el-button>
 											</template>
@@ -354,6 +343,10 @@
 									</el-table>
 									</div>
 									<div class="pagination"><el-pagination v-model:current-page="esaRecordPage" v-model:page-size="esaRecordPageSize" :page-sizes="[20, 50, 100]" layout="total, sizes, prev, pager, next" :total="esaRecordTotal" @current-change="loadEsaRecords" @size-change="changeEsaRecordPageSize" /></div>
+								</el-tab-pane>
+
+								<el-tab-pane :label="pub.lang('流量分析')" name="analytics" lazy>
+									<TrafficAnalytics v-if="selectedEsaSite" :account-id="accountId" product="esa" :site-id="selectedEsaSite.site_id" :site-name="selectedEsaSite.site_name" />
 								</el-tab-pane>
 
 								<el-tab-pane :label="pub.lang('源站信息')" name="origins">
@@ -499,8 +492,9 @@
 						<el-button type="primary" :icon="Plus" @click="openOssBucketDialog">{{ pub.lang('创建 Bucket') }}</el-button>
 					</div>
 				</div>
+				<el-alert v-if="ossListError" type="warning" :closable="false" class="resource-alert" :title="ossListError" />
 				<div v-loading="ossLoading" class="oss-bucket-scroll">
-					<el-empty v-if="!ossLoading && !ossBuckets.length" :description="pub.lang('暂无 Bucket')" />
+					<el-empty v-if="!ossLoading && !ossBuckets.length" :description="ossListError ? pub.lang('Bucket 获取失败，请重试') : pub.lang('暂无 Bucket')" />
 					<div v-else class="oss-bucket-grid">
 						<article
 							v-for="bucket in ossBuckets"
@@ -745,7 +739,8 @@
 				<el-form-item :label="pub.lang('域名')"><el-input :model-value="selectedDomain?.domain_name" disabled /></el-form-item>
 				<el-form-item label="RR" prop="rr"><el-input v-model="recordForm.rr" placeholder="@ / www" @input="removeRecordRrSpaces" /></el-form-item>
 				<el-form-item :label="pub.lang('类型')" prop="type"><el-select v-model="recordForm.type" class="w-full"><el-option v-for="type in recordTypes" :key="type" :label="type" :value="type" /></el-select></el-form-item>
-				<el-form-item v-if="!recordForm.record_id" :label="pub.lang('记录目标')"><el-select v-model="recordOssBucket" clearable filterable class="w-full" :loading="ossCandidateLoading" :placeholder="pub.lang('手动填写或选择 OSS Bucket')" @change="selectRecordOssBucket"><el-option v-for="bucket in ossCandidates" :key="bucket.name" :label="`${bucket.name} · ${bucket.region}`" :value="bucket.name" /></el-select></el-form-item>
+				<el-form-item v-if="!recordForm.record_id" :label="pub.lang('记录目标')"><el-select v-model="recordOssBucket" clearable filterable class="w-full" :loading="ossCandidateLoading" :placeholder="pub.lang('手动填写或选择 OSS Bucket')" @visible-change="visible => visible && ensureOssCandidates()" @change="selectRecordOssBucket"><el-option v-for="bucket in ossCandidates" :key="bucket.name" :label="`${bucket.name} · ${bucket.region}`" :value="bucket.name" /></el-select></el-form-item>
+				<el-form-item v-if="!recordForm.record_id && ossCandidateError"><span class="oss-candidate-error">{{ ossCandidateError }}</span><el-button link type="primary" :loading="ossCandidateLoading" @click="ensureOssCandidates(true)">{{ pub.lang('重试') }}</el-button></el-form-item>
 				<el-form-item :label="pub.lang('记录值')" prop="value"><el-input v-model="recordForm.value" @input="removeRecordValueSpaces" /></el-form-item>
 				<el-form-item label="TTL" prop="ttl"><el-input-number v-model="recordForm.ttl" :min="1" :max="86400" class="w-full" /></el-form-item>
 				<el-form-item :label="pub.lang('线路')" prop="line"><el-select v-model="recordForm.line" filterable class="w-full"><el-option v-for="line in recordLines" :key="line.code" :label="line.name" :value="line.code" /></el-select></el-form-item>
@@ -776,6 +771,7 @@
 				</template>
 				<el-form-item v-if="esaRecordForm.type === 'CNAME'" :label="pub.lang('源站类型')"><el-select v-model="esaRecordForm.source_type" class="w-full" @change="handleEsaSourceTypeChange"><el-option :label="pub.lang('普通域名')" value="Domain" /><el-option label="OSS" value="OSS" /><el-option label="S3" value="S3" /><el-option label="LB" value="LB" /><el-option label="OP" value="OP" /></el-select></el-form-item>
 				<el-form-item v-if="esaRecordForm.type === 'CNAME' && esaRecordForm.source_type === 'OSS'" label="OSS Bucket"><el-select v-model="esaOssBucket" filterable class="w-full" :loading="ossCandidateLoading" @change="selectEsaOssBucket"><el-option v-for="bucket in ossCandidates" :key="bucket.name" :label="`${bucket.name} · ${bucket.region}`" :value="bucket.name" /></el-select></el-form-item>
+				<el-form-item v-if="esaRecordForm.type === 'CNAME' && esaRecordForm.source_type === 'OSS' && ossCandidateError"><span class="oss-candidate-error">{{ ossCandidateError }}</span><el-button link type="primary" :loading="ossCandidateLoading" @click="ensureOssCandidates(true)">{{ pub.lang('重试') }}</el-button></el-form-item>
 				<el-form-item v-if="esaRecordProxySupported" :label="pub.lang('代理加速')"><el-switch v-model="esaRecordForm.proxied" active-color="#ff6a00" /></el-form-item>
 				<el-form-item v-if="esaRecordForm.proxied" :label="pub.lang('业务场景')"><el-select v-model="esaRecordForm.biz_name" class="w-full"><el-option :label="pub.lang('网页')" value="web" /><el-option label="API" value="api" /><el-option :label="pub.lang('图片视频')" value="image_video" /></el-select></el-form-item>
 				<el-form-item :label="pub.lang('备注')"><el-input v-model="esaRecordForm.comment" maxlength="100" show-word-limit /></el-form-item>
@@ -784,6 +780,16 @@
 				<el-button @click="esaRecordDialogVisible = false">{{ pub.lang('取消') }}</el-button>
 				<el-button type="primary" :loading="esaRecordSaving" @click="saveEsaRecord">{{ pub.lang('保存') }}</el-button>
 			</template>
+		</el-dialog>
+
+		<el-dialog v-model="esaRecordExportVisible" width="460" align-center :title="pub.lang('导出 ESA 解析记录')" :close-on-click-modal="false">
+			<el-form label-width="85px" :disabled="esaRecordExporting">
+				<el-form-item :label="pub.lang('站点')">{{ esaExportSnapshot.siteName }}</el-form-item>
+				<el-form-item :label="pub.lang('格式')"><el-radio-group v-model="esaExportFormat"><el-radio value="txt" label="txt">TXT</el-radio><el-radio value="xlsx" label="xlsx">Excel (.xlsx)</el-radio></el-radio-group></el-form-item>
+				<el-form-item :label="pub.lang('范围')"><el-select v-model="esaExportScope" class="w-full"><el-option value="filtered" :label="pub.lang('当前筛选的全部记录')" /><el-option value="selected" :disabled="!esaExportSnapshot.recordIds.length" :label="pub.lang(`勾选记录（${esaExportSnapshot.recordIds.length} 条）`)" /></el-select></el-form-item>
+				<el-form-item v-if="esaExportSnapshot.keyword || esaExportSnapshot.type !== 'all'" :label="pub.lang('筛选')">{{ esaExportSnapshot.keyword || pub.lang('全部主机') }} · {{ esaExportSnapshot.type === 'all' ? pub.lang('全部类型') : esaExportSnapshot.type }}</el-form-item>
+			</el-form>
+			<template #footer><el-button :disabled="esaRecordExporting" @click="esaRecordExportVisible = false">{{ pub.lang('取消') }}</el-button><el-button type="primary" :loading="esaRecordExporting" @click="exportEsaRecords">{{ pub.lang('导出并保存') }}</el-button></template>
 		</el-dialog>
 
 		<el-dialog v-model="esaCertificateApplyVisible" width="560" align-center :title="pub.lang('申请 ESA HTTPS 证书')" :close-on-click-modal="false">
@@ -846,6 +852,7 @@
 							<el-button type="danger" link :disabled="cdnDomainForm.sources.length === 1" @click="removeCdnSource(index)">{{ pub.lang('删除') }}</el-button>
 						</div>
 							<el-button plain :icon="Plus" @click="addCdnSource">{{ pub.lang('添加源站') }}</el-button>
+						<div v-if="cdnDomainForm.sources.some(source => source.type === 'oss') && ossCandidateError" class="oss-candidate-error">{{ ossCandidateError }} <el-button link type="primary" :loading="ossCandidateLoading" @click="ensureOssCandidates(true)">{{ pub.lang('重试') }}</el-button></div>
 					</div>
 				</el-form-item>
 			</el-form>
@@ -905,18 +912,28 @@
 				<el-pagination v-model:current-page="recordLogPage" :page-size="20" layout="total, prev, pager, next" :total="recordLogTotal" @current-change="loadRecordLogs" />
 			</div>
 		</el-drawer>
+		<ServerTrafficDetail v-model="serverTrafficVisible" :account-id="accountId" :server="selectedTrafficServer" @refreshed="updateServerTraffic" />
+		<RecordCheckDialog ref="recordCheckRef" :account-id="accountId" @deleted="refreshAfterRecordCheck" />
+		<ServerConnect ref="serverConnectRef" :account-id="accountId" @connected="launchServerTerminal" />
 	</div>
 </template>
 
 <script setup lang="ts">
 import { h } from 'vue'
-import { ArrowLeft, ArrowRight, Clock, CopyDocument, FolderOpened, Hide, InfoFilled, Monitor, MoreFilled, Plus, QuestionFilled, Refresh, Search, View } from '@element-plus/icons-vue'
+import { ArrowLeft, ArrowRight, Check, Clock, CopyDocument, Download, FolderOpened, Hide, InfoFilled, Monitor, MoreFilled, Plus, QuestionFilled, Refresh, Search, View } from '@element-plus/icons-vue'
 import { ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { common, ipc, routes } from '@api/http'
 import { useMessage } from '@utils/hooks/message'
 import { copyText, pub } from '@utils/tools'
+import { Renderer } from '@utils/ipcRenderer'
+import { canPreviewHostname, recordHostname } from '@utils/dns-record'
 import { useXtermBase } from '@store/xterm'
 import TrafficAnalytics from './components/traffic-analytics.vue'
+import ServerTrafficDetail from './components/server-traffic.vue'
+import ServerAllowance from './components/server-allowance.vue'
+import RecordCheckDialog from './components/record-check.vue'
+import ServerConnect from './components/server-connect.vue'
+import { formatServerTraffic, formatTrafficTime, serverTrafficKey, type ServerTraffic } from '@utils/server-traffic'
 
 defineOptions({ name: 'AliyunDetail' })
 
@@ -945,6 +962,7 @@ interface CloudServer {
 	instance_id: string
 	name: string
 	region_id: string
+	region_name?: string
 	status: string
 	os_type: string
 	os_name: string
@@ -961,11 +979,12 @@ interface CloudServer {
 }
 interface DomainItem { domain_id: string; domain_name: string; record_count: number; version_name: string; instance_end_time: string; instance_expired: boolean; expiration_date: string; expiration_days: number | null }
 interface DomainInfo { domain_name: string; dns_servers: string[]; dns_provider: 'alidns' | 'esa' | 'external' | 'unknown'; esa_in_current_account?: boolean; esa_site_id: string; esa_site_name: string }
-interface RecordItem { record_id: string; rr: string; type: string; value: string; ttl: number; line: string; priority: number; status: string; locked: boolean }
+interface RecordItem { record_id: string; domain_name?: string; rr: string; type: string; value: string; ttl: number; line: string; priority: number; status: string; locked: boolean }
 interface RecordLine { code: string; name: string }
 interface RecordLog { action: string; action_time: string; action_timestamp: number; client_ip: string; message: string }
 interface EsaSite { site_id: string; site_name: string; access_type: string; coverage: string; status: string; cname_zone: string; name_servers: string | string[]; plan_name: string; plan_spec_name: string; create_time: string; update_time: string }
-interface EsaSiteDetail extends EsaSite { instance_id: string; resource_group_id: string; offline_reason: string; version_management: boolean }
+interface EsaRecordQuota { status: 'known' | 'unknown'; limit: number | null; error?: string }
+interface EsaSiteDetail extends EsaSite { instance_id: string; resource_group_id: string; offline_reason: string; version_management: boolean; record_quota?: EsaRecordQuota }
 interface EsaRecord { record_id: string; record_name: string; type: string; value: string; priority: number; weight: number; port: number; flag: number; tag: string; ttl: number; proxied: boolean; record_cname: string; source_type: string; host_policy: string; http_ports: string; https_ports: string; comment: string; update_time: string }
 interface EsaOrigin { origin_id: string; name: string; address: string; type: string; enabled: boolean; weight: number; host_header: string }
 interface EsaOriginPool { pool_id: string; name: string; enabled: boolean; record_name: string; origins: EsaOrigin[] }
@@ -996,6 +1015,39 @@ const Message = useMessage()
 const xtermStore = useXtermBase()
 const accountId = Number(route.params.accountId)
 const request = (path: string, data: Record<string, unknown> = {}) => common.sendAsync({ route: path, data, timeout: 120000 }) as Promise<any>
+const recordCheckRef = ref<InstanceType<typeof RecordCheckDialog>>()
+const openRecordCheck = (provider: 'dns' | 'esa') => {
+	if (provider === 'dns' && selectedDomain.value && domainRecordsWritable.value) recordCheckRef.value?.open({ provider, name: selectedDomain.value.domain_name, domain_name: selectedDomain.value.domain_name })
+	if (provider === 'esa' && selectedEsaSite.value) recordCheckRef.value?.open({ provider, name: selectedEsaSite.value.site_name, site_id: selectedEsaSite.value.site_id })
+}
+const refreshAfterRecordCheck = (scope: { provider: 'dns' | 'esa'; domain_name?: string; site_id?: string }) => {
+	if (scope.provider === 'dns' && selectedDomain.value?.domain_name === scope.domain_name) loadRecords(1, true)
+	if (scope.provider === 'esa' && selectedEsaSite.value?.site_id === scope.site_id) loadEsaRecords(1, true)
+}
+const copiedHostname = ref('')
+let copiedHostnameTimer: ReturnType<typeof setTimeout> | undefined
+const dnsHostname = (record: RecordItem) => recordHostname(record, selectedDomain.value?.domain_name || '')
+const esaHostname = (record: EsaRecord) => recordHostname(record, selectedEsaSite.value?.site_name || '')
+const previewHostnameTip = (hostname: string) => hostname.includes('*') ? pub.lang('泛域名需要使用具体子域名预览') : pub.lang('该主机记录不能直接预览网页')
+const copyRecordHostname = async (hostname: string) => {
+	if (!hostname) return
+	try {
+		if (Renderer.clipboard) Renderer.clipboard.writeText(hostname)
+		else await navigator.clipboard.writeText(hostname)
+		if (copiedHostnameTimer) clearTimeout(copiedHostnameTimer)
+		copiedHostname.value = hostname
+		copiedHostnameTimer = setTimeout(() => { copiedHostname.value = '' }, 2000)
+		Message.success(pub.lang('域名已复制'))
+	} catch { Message.error(pub.lang('域名复制失败')) }
+}
+const previewRecordWebsite = async (hostname: string) => {
+	if (!canPreviewHostname(hostname)) return
+	try {
+		const result = await request(routes.aliyun.record_preview.path, { hostname })
+		if (!result?.status) Message.request(result)
+	} catch (error) { Message.error(error instanceof Error ? error.message : pub.lang('网站预览失败')) }
+}
+onBeforeUnmount(() => { if (copiedHostnameTimer) clearTimeout(copiedHostnameTimer) })
 
 const account = ref<AliyunAccount>()
 const accountLoading = ref(false)
@@ -1010,6 +1062,7 @@ const currentResourceStatus = (key: ResourceStatusKey) => {
 }
 const resourceStatusText = (key: ResourceStatusKey) => ({
 	not_opened: pub.lang('未开通'),
+	not_opened_or_disabled: pub.lang('未开通/停用'),
 	disabled: pub.lang('已停用'),
 	overdue: pub.lang('已欠费'),
 	permission_denied: pub.lang('无权限'),
@@ -1049,12 +1102,15 @@ const switchResourceTab = (name: string) => {
 const servers = ref<CloudServer[]>([])
 const serverLoading = ref(false)
 const serverLoaded = ref(false)
+const serverRevision = ref(0)
+const serverLoadError = ref('')
 const serverPartial = ref(false)
 const showServerIp = ref(false)
 const openingServerId = ref('')
+const serverConnectRef = ref<InstanceType<typeof ServerConnect>>()
 const serverPage = ref(1)
 const serverQuery = reactive({ keyword: '', source: 'all', region: 'all', status: 'all' })
-const serverRegions = computed(() => Array.from(new Set(servers.value.map(item => item.region_id))).sort())
+const serverRegions = computed(() => Array.from(new Map<string, string>(servers.value.map(server => [server.region_id, server.region_name || server.region_id])), ([value, label]) => ({ value, label })).sort((a, b) => a.value.localeCompare(b.value)))
 const serverStatuses = computed(() => Array.from(new Set(servers.value.map(item => item.status).filter(Boolean))).sort())
 const filteredServers = computed(() => {
 	const keyword = serverQuery.keyword.trim().toLowerCase()
@@ -1068,6 +1124,73 @@ const filteredServers = computed(() => {
 })
 const pagedServers = computed(() => filteredServers.value.slice((serverPage.value - 1) * 20, serverPage.value * 20))
 watch(serverQuery, () => { serverPage.value = 1 }, { deep: true })
+watch(() => filteredServers.value.length, total => { serverPage.value = Math.min(serverPage.value, Math.max(1, Math.ceil(total / 20))) })
+
+const serverTrafficPeriods = [{ key: 'today', label: '今日' }, { key: 'yesterday', label: '昨日' }, { key: 'this_month', label: '本月' }, { key: 'last_month', label: '上月' }] as const
+const serverTraffic = ref<Record<string, ServerTraffic>>({})
+const serverTrafficLoading = ref(false)
+const serverTrafficError = ref('')
+const serverTrafficVisible = ref(false)
+const selectedTrafficServer = ref<CloudServer | null>(null)
+let trafficRequestId = 0
+let trafficPageActive = true
+let trafficUpdatedAt = 0
+let trafficDate = ''
+let trafficTimer: ReturnType<typeof setInterval> | undefined
+const chinaDate = () => new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10)
+const loadServerTraffic = async (force = false) => {
+	if (!trafficPageActive || activeTab.value !== 'servers' || !pagedServers.value.length || document.hidden) return
+	if (serverTrafficLoading.value && !force) return
+	const id = ++trafficRequestId
+	const date = chinaDate()
+	if (trafficDate !== date) serverTraffic.value = {}
+	trafficDate = date
+	trafficUpdatedAt = Date.now()
+	const pageServers = pagedServers.value.map(server => ({ source: server.source, region_id: server.region_id, instance_id: server.instance_id }))
+	serverTrafficLoading.value = true
+	serverTrafficError.value = ''
+	try {
+		const result = await request(routes.aliyun.server_traffic.path, { account_id: accountId, servers: pageServers, force })
+		if (id !== trafficRequestId || chinaDate() !== date) return
+		if (!result?.status) { serverTrafficError.value = result?.msg || pub.lang('流量查询失败，请重试'); return }
+		serverTraffic.value = { ...serverTraffic.value, ...result.data.traffic }
+		trafficUpdatedAt = Date.now()
+	} catch (error) {
+		if (id === trafficRequestId) serverTrafficError.value = error instanceof Error ? error.message : pub.lang('流量查询失败，请重试')
+	} finally { if (id === trafficRequestId) serverTrafficLoading.value = false }
+}
+const serverTrafficStatus = (server: CloudServer) => {
+	const data = serverTraffic.value[serverTrafficKey(server)]
+	if (serverTrafficError.value || data?.errors.length) return pub.lang('查询失败')
+	if (!data) return pub.lang('待查询')
+	if (serverTrafficPeriods.every(period => !data[period.key] || data[period.key]?.in_bytes === null && data[period.key]?.out_bytes === null)) return pub.lang('暂无数据')
+	if (serverTrafficPeriods.some(period => data[period.key]?.partial)) return pub.lang('部分数据')
+	return pub.lang('监控估算')
+}
+const serverTrafficHint = (server: CloudServer) => {
+	const data = serverTraffic.value[serverTrafficKey(server)]
+	const errors = [...new Set(data?.errors.map(error => error.message) || [])].join('；')
+	const partialMonths = [data?.this_month?.partial ? pub.lang('本月数据不完整，显示已返回数据合计') : '', data?.last_month?.partial ? pub.lang('上月数据不完整，显示已返回数据合计') : ''].filter(Boolean)
+	return [serverTrafficError.value || errors, ...partialMonths, data?.note, data?.data_time ? `${pub.lang('最新监控')}：${formatTrafficTime(data.data_time)}` : '', pub.lang('北京时间统计公网流量，本月累计至当前，上月按完整自然月统计。监控数据可能延迟。点击查看近 30 天明细。')].filter(Boolean).join('；')
+}
+const openServerTraffic = (server: CloudServer) => {
+	selectedTrafficServer.value = server
+	serverTrafficVisible.value = true
+}
+const updateServerTraffic = (data: ServerTraffic) => {
+	if (selectedTrafficServer.value) {
+		const key = serverTrafficKey(selectedTrafficServer.value)
+		serverTraffic.value[key] = { ...serverTraffic.value[key], ...data }
+	}
+}
+const refreshVisibleTraffic = () => {
+	if (chinaDate() !== trafficDate || Date.now() - trafficUpdatedAt >= 5 * 60000) loadServerTraffic()
+}
+watch(() => [activeTab.value, pagedServers.value.map(serverTrafficKey).join(',')], () => {
+	trafficRequestId++
+	serverTrafficLoading.value = false
+	loadServerTraffic()
+}, { flush: 'post' })
 
 const domains = ref<DomainItem[]>([])
 const domainLoading = ref(false)
@@ -1096,6 +1219,7 @@ const domainProviderTip = computed(() => selectedDomainInfo.value?.dns_provider 
 const records = ref<RecordItem[]>([])
 const recordLoading = ref(false)
 const recordKeyword = ref('')
+let recordListRequestId = 0
 const recordType = ref('all')
 const recordPage = ref(1)
 const recordPageSize = ref(20)
@@ -1137,17 +1261,48 @@ const selectedEsaSite = ref<EsaSite>()
 const pendingEsaSiteId = ref('')
 const esaDetail = ref<EsaSiteDetail>()
 const esaDetailLoading = ref(false)
-const esaDetailTab = ref('analytics')
+let esaSiteDetailRequestId = 0
+const esaDetailTab = ref('records')
 const esaRecords = ref<EsaRecord[]>([])
 const esaRecordLoading = ref(false)
 const esaRecordLoaded = ref(false)
+let esaRecordListRequestId = 0
+const esaRecordAppliedFilters = reactive({ keyword: '', type: 'all' })
 const esaRecordKeyword = ref('')
 const esaRecordType = ref('all')
 const esaRecordPage = ref(1)
 const esaRecordPageSize = ref(20)
 const esaRecordTotal = ref(0)
+const esaRecordSiteTotal = ref<number | null>(null)
+const esaRecordSiteTotalError = ref('')
 const selectedEsaRecords = ref<EsaRecord[]>([])
 const esaRecordBatchLoading = ref(false)
+const esaRecordExportVisible = ref(false)
+const esaRecordExporting = ref(false)
+const esaExportFormat = ref('xlsx')
+const esaExportScope = ref('filtered')
+const esaExportSnapshot = reactive({ siteId: '', siteName: '', keyword: '', type: 'all', recordIds: [] as string[] })
+const openEsaExportDialog = () => {
+	if (!selectedEsaSite.value || esaRecordExporting.value) return
+	Object.assign(esaExportSnapshot, { siteId: selectedEsaSite.value.site_id, siteName: selectedEsaSite.value.site_name, keyword: esaRecordAppliedFilters.keyword, type: esaRecordAppliedFilters.type, recordIds: selectedEsaRecords.value.map(record => record.record_id) })
+	esaExportScope.value = 'filtered'
+	esaRecordExportVisible.value = true
+}
+const exportEsaRecords = async () => {
+	if (esaRecordExporting.value) return
+	const payload = { account_id: accountId, site_id: esaExportSnapshot.siteId, keyword: esaExportSnapshot.keyword, type: esaExportSnapshot.type, format: esaExportFormat.value, ...(esaExportScope.value === 'selected' ? { record_ids: [...esaExportSnapshot.recordIds] } : {}) }
+	esaRecordExporting.value = true
+	try {
+		// 系统保存窗口由用户决定停留时长，不使用普通接口的两分钟超时。
+		const result = await common.sendAsync({ route: routes.aliyun.esa_record_export.path, data: payload, timeout: 0 }) as any
+		if (!result?.status) return Message.request(result)
+		if (!result.data.canceled) {
+			esaRecordExportVisible.value = false
+			Message.success(pub.lang(`已导出 ${result.data.count} 条解析记录`))
+		}
+	} catch (error) { Message.error(error instanceof Error ? error.message : pub.lang('导出失败')) }
+	finally { esaRecordExporting.value = false }
+}
 const esaProxyLoadingId = ref('')
 const esaRecordTypes = ['A/AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SRV', 'CAA', 'PTR', 'CERT', 'SSHFP', 'TLSA', 'URI']
 const esaEditableRecordTypes = ['A/AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SRV', 'CAA', 'URI']
@@ -1240,6 +1395,13 @@ const esaOriginRows = computed(() => esaOrigins.pools.flatMap(pool => pool.origi
 const esaNameServers = computed(() => normalizeDisplayList(esaDetail.value?.name_servers || selectedEsaSite.value?.name_servers))
 const esaPrimaryEndpoint = computed(() => esaNameServers.value || esaDetail.value?.cname_zone || selectedEsaSite.value?.cname_zone || pub.lang('暂无接入地址'))
 const esaPlanName = computed(() => esaDetail.value?.plan_name || esaDetail.value?.plan_spec_name || selectedEsaSite.value?.plan_name || selectedEsaSite.value?.plan_spec_name || '--')
+const esaRecordQuota = computed(() => esaDetail.value?.record_quota)
+const esaRecordQuotaReady = computed(() => esaRecordQuota.value?.status === 'known' && esaRecordQuota.value.limit !== null && esaRecordSiteTotal.value !== null && !esaDetailLoading.value && !esaRecordLoading.value)
+const esaRecordQuotaPercentage = computed(() => !esaRecordQuotaReady.value ? 0 : esaRecordQuota.value!.limit === 0 ? 100 : Math.min(100, Math.floor(esaRecordSiteTotal.value! / esaRecordQuota.value!.limit! * 100)))
+const esaRecordQuotaTip = computed(() => [
+	pub.lang('上限以当前站点实际套餐配额为准。用量统计普通 DNS 记录，不受搜索和类型筛选影响；不含边缘容器、函数和四层加速的专用记录，以云端校验为准。'),
+	esaRecordQuota.value?.error, esaRecordSiteTotalError.value,
+].filter(Boolean).join(' '))
 const esaCertificateGroups = computed<EsaCertificateGroup[]>(() => {
 	const groups = new Map<string, EsaCertificateGroup>()
 	esaCertificateRecords.value.forEach(record => {
@@ -1325,7 +1487,11 @@ const cdnDomainOptions = computed(() => cdnDomains.value.map(domain => domain.do
 const ossBuckets = ref<OssBucket[]>([])
 const ossCandidates = ref<OssBucket[]>([])
 const ossLoading = ref(false)
+const ossListError = ref('')
 const ossCandidateLoading = ref(false)
+const ossCandidateState = ref<'idle' | 'loading' | 'loaded' | 'error'>('idle')
+const ossCandidateError = ref('')
+let ossCandidateRequest: Promise<void> | undefined
 const ossLoaded = ref(false)
 const ossKeyword = ref('')
 const ossPage = ref(1)
@@ -1514,37 +1680,58 @@ const disableSmsDetailDate = (date: Date) => {
 	earliest.setDate(earliest.getDate() - 29)
 	return date.getTime() < earliest.getTime() || date.getTime() > current.getTime()
 }
-const loadOssBuckets = async (page = ossPage.value, candidateOnly = false) => {
-	if (candidateOnly) ossCandidateLoading.value = true
-	else ossLoading.value = true
+const loadOssBuckets = async (page = ossPage.value) => {
+	ossLoading.value = true
+	ossListError.value = ''
 	try {
 		const result = await request(routes.aliyun.oss_bucket_list.path, {
 			account_id: accountId,
-			page: candidateOnly ? 1 : page,
-			page_size: candidateOnly ? 100 : 20,
-			keyword: candidateOnly ? '' : ossKeyword.value,
-			include_stat: !candidateOnly,
+			page,
+			page_size: 20,
+			keyword: ossKeyword.value,
 		})
 		if (!result?.status) {
 			applyResourceErrorStatus('oss', result)
+			ossListError.value = result?.msg || pub.lang('Bucket 获取失败')
 			return Message.request(result)
 		}
 		setResourceStatus('oss', 'active')
-		if (candidateOnly) ossCandidates.value = result.data.data || []
-		else {
-			ossPage.value = page
-			ossBuckets.value = result.data.data || []
-			ossTotal.value = result.data.total || 0
-			ossLoaded.value = true
-			if (account.value && !ossKeyword.value.trim()) account.value.oss_count = ossTotal.value
-			if (!ossCandidates.value.length) ossCandidates.value = result.data.data || []
-		}
-	} finally {
-		if (candidateOnly) ossCandidateLoading.value = false
-		else ossLoading.value = false
-	}
+		ossPage.value = page
+		ossBuckets.value = result.data.data || []
+		ossTotal.value = result.data.total || 0
+		ossLoaded.value = true
+		if (account.value && !ossKeyword.value.trim()) account.value.oss_count = ossTotal.value
+		if (ossCandidateState.value === 'error') ossCandidateState.value = 'idle'
+	} catch (error) {
+		ossListError.value = error instanceof Error ? error.message : pub.lang('Bucket 获取失败')
+	} finally { ossLoading.value = false }
 }
-const ensureOssCandidates = () => ossCandidates.value.length ? Promise.resolve() : loadOssBuckets(1, true)
+const ensureOssCandidates = (force = false): Promise<void> => {
+	if (ossCandidateRequest) return ossCandidateRequest
+	if (!force && ['loaded', 'error'].includes(ossCandidateState.value)) return Promise.resolve()
+	ossCandidateState.value = 'loading'
+	ossCandidateLoading.value = true
+	ossCandidateError.value = ''
+	ossCandidateRequest = (async () => {
+		try {
+			const result = await request(routes.aliyun.oss_bucket_list.path, { account_id: accountId, page: 1, page_size: 1000, include_stat: false })
+			if (!result?.status) {
+				applyResourceErrorStatus('oss', result)
+				throw new Error(result?.msg || pub.lang('Bucket 获取失败'))
+			}
+			ossCandidates.value = result.data.data || []
+			ossCandidateState.value = 'loaded'
+			setResourceStatus('oss', 'active')
+		} catch (error) {
+			ossCandidateState.value = 'error'
+			ossCandidateError.value = error instanceof Error ? error.message : pub.lang('Bucket 获取失败')
+		} finally {
+			ossCandidateLoading.value = false
+			ossCandidateRequest = undefined
+		}
+	})()
+	return ossCandidateRequest
+}
 const getOssCandidate = (name: string) => ossCandidates.value.find(item => item.name === name)
 const selectRecordOssBucket = (name: string) => {
 	const bucket = getOssCandidate(name)
@@ -1574,6 +1761,7 @@ const saveOssBucket = async () => {
 		if (!result?.status) return
 		ossBucketDialogVisible.value = false
 		ossCandidates.value = []
+		ossCandidateState.value = 'idle'
 		await loadOssBuckets(1)
 	} finally { ossBucketSaving.value = false }
 }
@@ -1584,6 +1772,7 @@ const removeOssBucket = async (bucket: OssBucket) => {
 	Message.request(result)
 	if (!result?.status) return
 	ossCandidates.value = []
+	ossCandidateState.value = 'idle'
 	await loadOssBuckets(Math.min(ossPage.value, Math.max(1, Math.ceil(Math.max(0, ossTotal.value - 1) / 20))))
 }
 const handleOssBucketCommand = (command: string, bucket: OssBucket) => {
@@ -1622,9 +1811,11 @@ const refreshBalance = async () => {
 }
 const loadServers = async (force = false) => {
 	serverLoading.value = true
+	serverLoadError.value = ''
 	try {
 		const result = await request(routes.aliyun.server_list.path, { account_id: accountId, force })
 		if (!result?.status) {
+			serverLoadError.value = result?.msg || pub.lang('服务器列表查询失败')
 			applyResourceErrorStatus('server', result)
 			return Message.request(result)
 		}
@@ -1633,9 +1824,14 @@ const loadServers = async (force = false) => {
 		setResourceStatus('server', serverPartial.value ? 'partial' : 'active')
 		if (account.value && result.data.count_complete !== false) account.value.server_count = servers.value.length
 		serverLoaded.value = true
-	} finally { serverLoading.value = false }
+		if (force) { await nextTick(); loadServerTraffic(true) }
+	} catch (error) {
+		serverLoadError.value = error instanceof Error ? error.message : pub.lang('服务器列表查询失败')
+		Message.error(serverLoadError.value)
+	} finally { serverLoading.value = false; serverRevision.value++ }
 }
 const openServer = async (server: CloudServer) => {
+	if (String(server.os_type).toLowerCase() !== 'windows') { serverConnectRef.value?.open(server); return }
 	openingServerId.value = server.instance_id
 	try {
 		if (server.source === 'swas') {
@@ -1648,6 +1844,19 @@ const openServer = async (server: CloudServer) => {
 		xtermStore.queueLaunch(result.data)
 		await router.push('/xterm')
 	} finally { openingServerId.value = '' }
+}
+
+const launchServerTerminal = async (data: Record<string, unknown>) => {
+	xtermStore.queueLaunch(data)
+	try {
+		const failure = await router.push('/xterm')
+		if (failure || router.currentRoute.value.path !== '/xterm') throw new Error('终端页面未打开')
+	}
+	catch {
+		xtermStore.consumeLaunch()
+		await request(routes.aliyun.ssh_cancel.path, { job_id: data.job_id }).catch(() => {})
+		Message.error(pub.lang('终端页面打开失败，请重新连接'))
+	}
 }
 
 const loadDomains = async (page = domainPage.value) => {
@@ -1705,37 +1914,53 @@ const loadEsaSites = async (page = esaPage.value) => {
 }
 const loadEsaSiteDetail = async (siteId = selectedEsaSite.value?.site_id) => {
 	if (!siteId) return
+	const requestId = ++esaSiteDetailRequestId
 	esaDetailLoading.value = true
+	if (esaDetail.value?.site_id === siteId) esaDetail.value.record_quota = undefined
 	try {
 		const result = await request(routes.aliyun.esa_site_detail.path, { account_id: accountId, site_id: siteId })
+		if (selectedEsaSite.value?.site_id !== siteId || requestId !== esaSiteDetailRequestId) return
 		if (!result?.status) {
 			applyResourceErrorStatus('esa', result)
 			return Message.request(result)
 		}
-		if (selectedEsaSite.value?.site_id === siteId) esaDetail.value = result.data
-	} finally { esaDetailLoading.value = false }
+		esaDetail.value = result.data
+	} finally { if (requestId === esaSiteDetailRequestId) esaDetailLoading.value = false }
 }
-const loadEsaRecords = async (page = esaRecordPage.value) => {
+const loadEsaRecords = async (page = esaRecordPage.value, force = false) => {
+	const requestId = ++esaRecordListRequestId
 	const siteId = selectedEsaSite.value?.site_id
 	if (!siteId) return
+	const keyword = esaRecordKeyword.value
+	const type = esaRecordType.value
 	esaRecordPage.value = page
 	esaRecordLoading.value = true
+	esaRecordSiteTotal.value = null
+	esaRecordSiteTotalError.value = ''
+	selectedEsaRecords.value = []
 	try {
 		const result = await request(routes.aliyun.esa_record_list.path, {
 			account_id: accountId,
 			site_id: siteId,
 			page,
 			page_size: esaRecordPageSize.value,
-			keyword: esaRecordKeyword.value,
-			type: esaRecordType.value,
+			keyword,
+			type,
+			force,
 		})
+		if (selectedEsaSite.value?.site_id !== siteId || requestId !== esaRecordListRequestId) return
 		if (!result?.status) return Message.request(result)
-		if (selectedEsaSite.value?.site_id !== siteId) return
 		esaRecords.value = result.data.data || []
 		esaRecordTotal.value = result.data.total || 0
+		esaRecordSiteTotal.value = Number.isSafeInteger(result.data.site_total) && result.data.site_total >= 0 ? result.data.site_total : null
+		esaRecordSiteTotalError.value = result.data.site_total_error || ''
+		Object.assign(esaRecordAppliedFilters, { keyword, type })
 		esaRecordLoaded.value = true
-	} finally { esaRecordLoading.value = false }
+	} catch (error) {
+		if (requestId === esaRecordListRequestId) Message.error(error instanceof Error ? error.message : pub.lang('解析记录获取失败'))
+	} finally { if (requestId === esaRecordListRequestId) esaRecordLoading.value = false }
 }
+const refreshEsaRecords = () => Promise.all([loadEsaRecords(esaRecordPage.value, true), loadEsaSiteDetail()])
 const loadEsaOrigins = async () => {
 	const siteId = selectedEsaSite.value?.site_id
 	if (!siteId) return
@@ -1851,12 +2076,15 @@ const retryEsaDeployTask = async (task: EsaDeployTask) => {
 const selectEsaSite = async (site: EsaSite) => {
 	selectedEsaSite.value = site
 	esaDetail.value = undefined
-	esaDetailTab.value = 'analytics'
+	esaDetailTab.value = 'records'
 	esaRecords.value = []
 	esaRecordKeyword.value = ''
 	esaRecordType.value = 'all'
+	Object.assign(esaRecordAppliedFilters, { keyword: '', type: 'all' })
 	esaRecordPage.value = 1
 	esaRecordTotal.value = 0
+	esaRecordSiteTotal.value = null
+	esaRecordSiteTotalError.value = ''
 	esaRecordLoaded.value = false
 	esaOrigins.pools = []
 	esaOrigins.rules = []
@@ -1994,6 +2222,8 @@ const openCdnOperationLogs = () => {
 const previousCdnLogPage = () => cdnLogPage.value > 1 && loadCdnOperationLogs(cdnLogPage.value - 1)
 const nextCdnLogPage = () => cdnLogNextToken.value && loadCdnOperationLogs(cdnLogPage.value + 1)
 const selectDomain = async (domain: DomainItem) => {
+	recordListRequestId += 1
+	recordLoading.value = false
 	selectedDomain.value = domain
 	selectedDomainInfo.value = undefined
 	records.value = []
@@ -2018,16 +2248,22 @@ const openSelectedDomainInEsa = () => {
 	esaLoaded.value = false
 	switchResourceTab('esa')
 }
-const loadRecords = async (page = recordPage.value) => {
+const loadRecords = async (page = recordPage.value, force = false) => {
+	const requestId = ++recordListRequestId
 	if (!selectedDomain.value) return
+	const domainName = selectedDomain.value.domain_name
 	recordPage.value = page
 	recordLoading.value = true
+	selectedRecords.value = []
 	try {
-		const result = await request(routes.aliyun.record_list.path, { account_id: accountId, domain_name: selectedDomain.value.domain_name, page, page_size: recordPageSize.value, keyword: recordKeyword.value, type: recordType.value })
+		const result = await request(routes.aliyun.record_list.path, { account_id: accountId, domain_name: domainName, page, page_size: recordPageSize.value, keyword: recordKeyword.value, type: recordType.value, force })
+		if (requestId !== recordListRequestId || selectedDomain.value?.domain_name !== domainName) return
 		if (!result?.status) return Message.request(result)
 		records.value = result.data.data || []
 		recordTotal.value = result.data.total || 0
-	} finally { recordLoading.value = false }
+	} catch (error) {
+		if (requestId === recordListRequestId) Message.error(error instanceof Error ? error.message : pub.lang('解析记录获取失败'))
+	} finally { if (requestId === recordListRequestId) recordLoading.value = false }
 }
 const loadRecordLines = async () => {
 	if (!selectedDomain.value) return
@@ -2060,7 +2296,7 @@ const openRecordLogs = () => {
 const openRecordDialog = (record?: RecordItem) => {
 	resetRecordForm()
 	if (record) Object.assign(recordForm, record)
-	else { recordOssBucket.value = ''; ensureOssCandidates() }
+	else recordOssBucket.value = ''
 	recordDialogVisible.value = true
 }
 const resetRecordForm = () => { Object.assign(recordForm, createRecordForm()); recordFormRef.value?.clearValidate() }
@@ -2128,7 +2364,7 @@ const openEsaRecordDialog = (record?: EsaRecord) => {
 		host_policy: record.host_policy || 'follow_hostname',
 		comment: record.comment || '',
 	})
-	if (!record) { esaOssBucket.value = ''; ensureOssCandidates() }
+	if (!record) esaOssBucket.value = ''
 	else if (esaRecordForm.source_type === 'OSS') ensureOssCandidates()
 	esaRecordDialogVisible.value = true
 }
@@ -2393,11 +2629,6 @@ const formatComputeSpec = (server: CloudServer) => {
 	const memory = server.memory_gb > 0 ? `${formatNumber(server.memory_gb)} GB` : '--'
 	return `${cpu} / ${memory}`
 }
-const formatStorageSpec = (server: CloudServer) => {
-	const bandwidth = `${pub.lang('带宽')} ${formatNumber(server.bandwidth_mbps || 0)} Mbps`
-	const disk = server.disk_gb === null ? `${pub.lang('磁盘')} --` : `${pub.lang('磁盘')} ${formatNumber(server.disk_gb)} GB`
-	return `${bandwidth} / ${disk}`
-}
 const ossStorageClassName = (value: string) => ({ Standard: pub.lang('标准存储'), IA: pub.lang('低频访问'), Archive: pub.lang('归档存储'), ColdArchive: pub.lang('冷归档'), DeepColdArchive: pub.lang('深度冷归档') }[value] || value || '--')
 const formatBytes = (size: number | null) => {
 	const value = Number(size || 0)
@@ -2435,6 +2666,10 @@ const handleRefreshShortcut = (event: KeyboardEvent) => {
 const handleIpcRefresh = () => refreshCurrentPage()
 
 const activatePageListeners = () => {
+	trafficPageActive = true
+	document.addEventListener('visibilitychange', refreshVisibleTraffic)
+	if (!trafficTimer) trafficTimer = setInterval(refreshVisibleTraffic, 60000)
+	refreshVisibleTraffic()
 	window.addEventListener('keydown', handleRefreshShortcut, true)
 	ipc.on('aliyun-refresh', handleIpcRefresh)
 	if (!esaDeployPollingTimer.value) {
@@ -2446,6 +2681,12 @@ const activatePageListeners = () => {
 	}
 }
 const deactivatePageListeners = () => {
+	trafficPageActive = false
+	trafficRequestId++
+	serverTrafficLoading.value = false
+	document.removeEventListener('visibilitychange', refreshVisibleTraffic)
+	if (trafficTimer) clearInterval(trafficTimer)
+	trafficTimer = undefined
 	window.removeEventListener('keydown', handleRefreshShortcut, true)
 	ipc.removeListener('aliyun-refresh', handleIpcRefresh)
 	if (esaDeployPollingTimer.value) {
@@ -2468,6 +2709,8 @@ onBeforeUnmount(deactivatePageListeners)
 </script>
 
 <style scoped lang="scss">
+@use '../../styles/cloud-layout' as cloud;
+
 .aliyun-detail { min-height: 100%; padding: 2rem 3.6rem 3.6rem; color: var(--el-text-color-primary); }
 .detail-header, .detail-header__identity, .detail-header__aside, .resource-navigation, .resource-navigation__items, .resource-navigation__item, .resource-navigation__meta, .resource-toolbar, .resource-toolbar__filters, .resource-toolbar__actions, .record-toolbar, .record-toolbar__actions, .record-log-toolbar, .domain-search { display: flex; align-items: center; }
 .detail-header { min-height: 6.8rem; justify-content: space-between; gap: 2rem; padding-bottom: 1.4rem; }
@@ -2492,11 +2735,22 @@ onBeforeUnmount(deactivatePageListeners)
 .resource-navigation__meta { flex: 0 0 auto; gap: .8rem; color: var(--el-text-color-secondary); font-size: 1.1rem; white-space: nowrap; }
 .resource-tabs { :deep(.el-tabs__header) { display: none; } }
 .server-pane { display: flex; height: calc(100vh - 23rem); min-height: 36rem; flex-direction: column; }
-.server-table-wrap { min-height: 0; flex: 1; }
+.server-card-scroll { min-height: 0; padding-right: .2rem; overflow-y: auto; flex: 1; }
+.server-card-grid { @include cloud.server-grid; }
+.server-card { @include cloud.server-card; }
+.server-card__header { display: flex; min-width: 0; align-items: center; gap: .8rem; > .el-tag { flex-shrink: 0; } }
+.server-card__icon { display: flex; width: 3rem; height: 3rem; border-radius: .6rem; align-items: center; justify-content: center; color: #ff6a00; font-size: 1.7rem; background: rgba(255, 106, 0, .1); flex-shrink: 0; }
+.server-card__identity { min-width: 0; flex: 1; strong, span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } strong { font-size: 1.35rem; font-weight: 650; } span { margin-top: .2rem; color: var(--el-text-color-secondary); font-size: 1rem; } }
+.server-card__meta { display: flex; min-width: 0; align-items: center; gap: .6rem; color: var(--el-text-color-secondary); font-size: 1.05rem; > .el-tag, > span:not(.server-card__os) { flex-shrink: 0; } }
+.server-card__os { min-width: 0; overflow: hidden; padding-left: .6rem; border-left: 1px solid var(--el-border-color-light); text-overflow: ellipsis; white-space: nowrap; }
+.server-card__specs { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: .7rem; padding: .7rem 0; border-top: 1px solid var(--el-border-color-lighter); > div { display: flex; min-width: 0; align-items: baseline; gap: .4rem; flex-wrap: wrap; } span { color: var(--el-text-color-secondary); font-size: 1rem; } strong { font-size: 1.1rem; font-weight: 600; overflow-wrap: anywhere; } }
+.server-card__ips { font-size: 1.05rem; .server-ip { min-height: 1.9rem; } .server-ip .mono { min-width: 0; overflow-wrap: anywhere; } }
+.server-card__footer { display: flex; align-items: center; justify-content: space-between; gap: .8rem; padding-top: .2rem; color: var(--el-text-color-secondary); font-size: 1rem; .el-button { flex-shrink: 0; } }
 .cdn-pane { display: flex; height: calc(100vh - 23rem); min-height: 36rem; flex-direction: column; }
 .cdn-view-switch { display: flex; justify-content: flex-start; margin-bottom: 1rem; }
 .cdn-analytics { min-height: 0; overflow-y: auto; padding-right: .2rem; flex: 1; }
 .cdn-table-wrap { min-height: 0; flex: 1; }
+.oss-candidate-error { color: var(--el-color-warning); overflow-wrap: anywhere; }
 .oss-pane { display: flex; height: calc(100vh - 23rem); min-height: 36rem; flex-direction: column; }
 .oss-bucket-scroll { min-height: 0; overflow-y: auto; flex: 1; }
 .sms-pane { display: flex; height: calc(100vh - 23rem); min-height: 36rem; flex-direction: column; }
@@ -2535,8 +2789,13 @@ onBeforeUnmount(deactivatePageListeners)
 .instance-name { font-weight: 600; line-height: 1.35; }
 .server-ip { display: flex; align-items: center; gap: .35rem; min-height: 2.2rem; }
 .server-ip__copy { opacity: .58; transition: opacity .15s; &:hover { opacity: 1; } }
-.server-spec { font-weight: 600; }
-.server-spec__secondary { margin-top: .25rem; color: var(--el-text-color-secondary); font-size: 1.15rem; }
+.server-ip__label { min-width: 2.6rem; margin-right: .2rem; color: var(--el-text-color-secondary); font-size: 1rem; flex-shrink: 0; }
+.server-traffic-card { display: block; width: 100%; margin-top: auto; padding: .65rem .9rem; border: 1px solid var(--el-border-color-lighter); border-radius: .6rem; color: var(--el-text-color-primary); font: inherit; text-align: left; background: var(--el-fill-color-extra-light); cursor: pointer; transition: border-color .15s, background .15s; &:hover, &:focus-visible { border-color: var(--el-color-primary-light-5); background: var(--el-color-primary-light-9); } .inbound { color: var(--el-color-primary); } .outbound { color: var(--el-color-success); } }
+.server-traffic-card__heading, .server-traffic-card__row { display: grid; grid-template-columns: 3rem minmax(0, 1fr) minmax(0, 1fr); column-gap: .7rem; align-items: center; span:first-child { color: var(--el-text-color-secondary); } }
+.server-traffic-card__heading { margin-bottom: .25rem; font-size: 1rem; }
+.server-traffic-card__row { margin-top: .1rem; line-height: 1.45; font-size: 1.05rem; strong { font-size: 1.1rem; font-weight: 600; white-space: nowrap; } }
+.server-traffic-card__row--month { margin-top: .25rem; padding-top: .25rem; border-top: 1px solid var(--el-border-color-lighter); }
+.server-traffic-card__footer { display: flex; justify-content: space-between; gap: .6rem; margin-top: .35rem; color: var(--el-text-color-secondary); font-size: 1rem; span:last-child { color: var(--el-color-primary); } }
 .server-status.el-tag--success { border-color: rgba(52, 168, 83, .22); color: #2f9e57; background: rgba(52, 168, 83, .1); }
 .resource-tabs :deep(.el-table th.el-table__cell) { height: 4.2rem; padding: .6rem 0; color: var(--el-text-color-secondary); font-size: 1.15rem; font-weight: 500; background: transparent; }
 .resource-tabs :deep(.el-table td.el-table__cell) { padding: .9rem 0; }
@@ -2548,6 +2807,7 @@ onBeforeUnmount(deactivatePageListeners)
 .domain-panel { display: flex; min-height: 0; padding-right: 1.6rem; border-right: 1px solid var(--el-border-color-light); flex-direction: column; }
 .record-panel { display: flex; min-width: 0; min-height: 0; flex-direction: column; }
 .record-table-wrap { min-height: 0; flex: 1; }
+.record-hostname { display: inline-flex; max-width: 100%; align-items: center; gap: .45rem; vertical-align: middle; > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .el-button { flex: 0 0 auto; } }
 .domain-search { gap: .6rem; }
 .domain-list { min-height: 0; margin: 1rem 0; overflow-x: hidden; overflow-y: auto; flex: 1; }
 .domain-item { padding: 1rem 1.2rem; border-radius: .8rem; cursor: pointer; transition: .2s; strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } &:hover { background: var(--el-fill-color-light); } &.active { color: var(--el-color-primary); background: var(--el-color-primary-light-9); } }
@@ -2568,10 +2828,12 @@ onBeforeUnmount(deactivatePageListeners)
 .esa-overview__facts { display: flex; flex: 0 0 auto; gap: 2.6rem; div { display: flex; min-width: 8rem; flex-direction: column; gap: .35rem; } span { color: var(--el-text-color-secondary); font-size: 1.05rem; } strong { max-width: 15rem; overflow: hidden; font-size: 1.18rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; } }
 .esa-detail-tabs { height: calc(100% - 8rem); padding-top: .35rem; :deep(.el-tabs__content) { height: calc(100% - 4.6rem); overflow: hidden; } :deep(.el-tab-pane) { display: flex; height: 100%; min-height: 0; flex-direction: column; } }
 .esa-detail-tabs :deep(.el-tabs__header) { display: flex; }
-.esa-content-toolbar { display: flex; justify-content: space-between; gap: .8rem; margin-bottom: 1rem; .el-input { max-width: 30rem; } &--end { justify-content: flex-end; min-height: 3.2rem; } }
+.esa-record-quota { flex: 0 0 auto; margin-bottom: 1.2rem; padding: 1rem 1.2rem; border: 1px solid var(--el-border-color-lighter); border-radius: .6rem; background: var(--el-fill-color-light); &.is-full strong { color: var(--el-color-danger); } }
+.esa-record-quota__summary { display: flex; align-items: center; justify-content: space-between; gap: .8rem; margin-bottom: .5rem; color: var(--el-text-color-secondary); font-size: 1.1rem; > span:first-child { display: flex; align-items: center; gap: .5rem; } strong { color: var(--el-text-color-primary); font-variant-numeric: tabular-nums; } }
+.esa-content-toolbar { display: flex; justify-content: space-between; gap: .8rem; margin-bottom: 1rem; flex-wrap: wrap; .el-input { max-width: 30rem; } &--end { justify-content: flex-end; min-height: 3.2rem; } }
 .esa-record-filters, .esa-record-actions { display: flex; align-items: center; gap: .8rem; }
 .esa-record-filters { min-width: 0; flex: 1; .el-input { width: 28rem; } .el-select { width: 12rem; } }
-.esa-record-actions { flex: 0 0 auto; }
+.esa-record-actions { max-width: 100%; flex: 0 0 auto; flex-wrap: wrap; }
 .cdn-source-list { display: flex; width: 100%; flex-direction: column; gap: .8rem; }
 .cdn-source-row { display: grid; align-items: center; grid-template-columns: 11rem minmax(0, 1fr) 12rem auto; gap: .8rem; }
 .cdn-log-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 1rem; padding-top: 1.2rem; color: var(--el-text-color-secondary); }
@@ -2586,12 +2848,12 @@ onBeforeUnmount(deactivatePageListeners)
 .esa-site-info { display: grid; padding-top: .8rem; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 3.2rem; }
 .esa-site-info dl { display: grid; min-width: 0; margin: 0; padding: 1.25rem 0; border-bottom: 1px solid var(--el-border-color-lighter); grid-template-columns: 10rem minmax(0, 1fr); gap: 1.2rem; dt { color: var(--el-text-color-secondary); font-size: 1.1rem; } dd { min-width: 0; overflow: hidden; margin: 0; color: var(--el-text-color-primary); text-overflow: ellipsis; white-space: nowrap; } }
 .esa-site-info__wide { grid-column: 1 / -1; }
-.record-toolbar { align-items: flex-start; justify-content: space-between; gap: 1.5rem; margin-bottom: 1.2rem; h3 { margin: 0; font-size: 1.6rem; } }
+.record-toolbar { align-items: flex-start; justify-content: space-between; gap: 1.5rem; margin-bottom: 1.2rem; flex-wrap: wrap; h3 { margin: 0; font-size: 1.6rem; } }
 .record-heading { min-width: 0; }
 .record-heading__title { display: flex; align-items: center; gap: .7rem; }
 .domain-dns { display: flex; min-height: 2rem; align-items: center; gap: .6rem; margin-top: .45rem; color: var(--el-text-color-secondary); font-size: 1.1rem; flex-wrap: wrap; span { font-weight: 600; } code { padding: .1rem .45rem; border-radius: .35rem; color: var(--el-text-color-regular); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--el-fill-color-light); } em { font-style: normal; } }
 .dns-provider-alert { margin: -.2rem 0 1rem; }
-.record-toolbar__actions { gap: .8rem; .el-input { width: 22rem; } .el-select { width: 12rem; } }
+.record-toolbar__actions { max-width: 100%; gap: .8rem; flex-wrap: wrap; .el-input { width: 22rem; } .el-select { width: 12rem; } }
 .record-log-toolbar { gap: .8rem; margin-bottom: 1.2rem; .el-input { flex: 1; } }
 @media (max-width: 1280px) { .resource-navigation__item { padding: 0 1.3rem; } .oss-bucket-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 1100px) { .detail-header { flex-wrap: wrap; } .detail-header__aside { margin-left: 5.6rem; } .resource-navigation { align-items: flex-start; flex-direction: column; gap: .8rem; } .resource-navigation__meta { align-self: flex-end; } .dns-layout { grid-template-columns: 22rem minmax(0, 1fr); } .esa-layout { grid-template-columns: 23rem minmax(0, 1fr); } .esa-overview { flex-direction: column; gap: 1rem; } .esa-overview__facts { width: 100%; } .resource-toolbar, .resource-toolbar__filters { flex-wrap: wrap; } .record-toolbar { align-items: flex-start; flex-direction: column; } }

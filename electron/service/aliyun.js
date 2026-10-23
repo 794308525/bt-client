@@ -15,6 +15,7 @@ const Log = require('ee-core/log');
 const https = require('https');
 const zlib = require('zlib');
 const { pub } = require('../class/public.js');
+const { serverTrafficKey, trafficRange, trafficMonthRange, summarizeTrafficMonths, aggregateTraffic, combineTraffic } = require('./server-traffic.js');
 
 const SUMMARY_TTL = 5 * 60;
 const OSS_TRAFFIC_TTL = 5 * 60;
@@ -37,6 +38,7 @@ const SUMMARY_CONCURRENCY = 2;
 const MAX_ACCOUNT_REQUEST_CONCURRENCY = 4;
 const MAX_REGION_CONCURRENCY = 3;
 const READ_RETRY_COUNT = 2;
+const RECORD_SEARCH_TTL = 60;
 const SWAS_BOOTSTRAP_REGION = 'cn-hangzhou';
 
 const listCache = new Map();
@@ -45,6 +47,11 @@ const resourceRegionCache = new Map();
 const summaryRequests = new Map();
 const esaUrlRankingRequests = new Map();
 const esaTrafficRequests = new Map();
+const esaCapabilityRequests = new Map();
+const recordSearchRequests = new Map();
+const serverTrafficCache = new Map();
+const serverTrafficRequests = new Map();
+const runServerTrafficTask = createLimiter(3);
 const runSummaryTask = createLimiter(SUMMARY_CONCURRENCY);
 const runEsaLogDownload = createLimiter(ESA_LOG_DOWNLOAD_CONCURRENCY);
 const runEsaAnalyticsTask = createLimiter(1);
@@ -60,7 +67,7 @@ const ESA_RECORD_ERROR_MESSAGES = {
   'CertificateDomainNotMatchSite': '证书域名与当前 ESA 站点不匹配',
   'CertificateNotMatchPrivateKey': '证书与私钥不匹配，请重新签发后再试',
   'CertQuotaCheckFailed': '当前 ESA 站点的证书数量已达到上限',
-  'QuotaCheckFailed.Function': '当前 ESA 套餐不支持该监控查询（例如 30 天历史数据），请缩短查询范围；如需更长时间的数据分析，请升级套餐或联系阿里云客户经理',
+  'QuotaCheckFailed.Function': '当前 ESA 套餐不支持本次查询的功能、指标或时间范围，请检查站点套餐及查询条件',
   'Instance.NotOnline': '当前 ESA 套餐已欠费或未上线，请续费后重试',
   'InternalException': 'ESA 服务调用失败，请稍后重试；持续失败时请联系阿里云技术支持',
   'InvalidParameter.CnameSiteRecordNoProxied': '当前站点使用 CNAME 接入，解析记录必须开启代理加速',
@@ -164,7 +171,7 @@ const ESA_RECORD_ERROR_MESSAGES = {
 
 const OSS_ERROR_MESSAGES = {
   AccessDenied: '当前 AccessKey 无权访问 OSS，请检查 RAM 权限',
-  UserDisable: '当前阿里云账号的 OSS 服务已被停用，请检查账号欠费和 OSS 服务状态；如仍无法恢复，请携带 RequestId 联系阿里云技术支持',
+  UserDisable: 'OSS 未开通或已停用，请检查开通、欠费及账号状态；如仍无法恢复，请携带 RequestId 联系阿里云技术支持',
   NoSuchBucket: '指定的 OSS Bucket 不存在或已被删除',
   NoSuchKey: '指定的 OSS 对象不存在或已被删除',
   BucketAlreadyExists: 'Bucket 名称已被占用，请更换名称',
@@ -379,7 +386,8 @@ function normalizeError(error, service = '') {
     const serviceMessage = getServiceErrorMessage(effectiveService, error.code, '');
     if (serviceMessage) error.message = serviceMessage;
     error.service = effectiveService;
-    error.status = getResourceStatus(error.code, error.message);
+    error.status = effectiveService === 'oss' && error.code === 'UserDisable'
+      ? 'not_opened_or_disabled' : getResourceStatus(error.code, error.message);
     if (!serviceMessage) error.message = getStatusErrorMessage(effectiveService, error.status) || error.message;
     return error;
   }
@@ -416,7 +424,8 @@ function normalizeError(error, service = '') {
 
   const normalized = new AliyunServiceError(message, code, requestId, detail);
   normalized.service = service;
-  normalized.status = getResourceStatus(code, sourceMessage);
+  normalized.status = service === 'oss' && code === 'UserDisable'
+    ? 'not_opened_or_disabled' : getResourceStatus(code, sourceMessage);
   if (!exactMessage) normalized.message = getStatusErrorMessage(service, normalized.status) || normalized.message;
   return normalized;
 }
@@ -661,6 +670,58 @@ function normalizeRecordStatus(status) {
   if (value === 'ENABLE') return 'Enable';
   if (value === 'DISABLE') return 'Disable';
   return String(status || '');
+}
+
+async function collectRecordPages(fetchPage) {
+  const records = new Map();
+  let total;
+  let requestId = '';
+  for (let page = 1; ; page += 1) {
+    const result = await fetchPage(page);
+    if (total === undefined) total = result.total;
+    if (result.total !== total || (!result.data.length && records.size < total)) {
+      throw new AliyunServiceError('解析记录在查询期间发生变化，请刷新后重试', 'RecordsChanged');
+    }
+    requestId = requestId || result.requestId || '';
+    for (const record of result.data) {
+      const id = String(record.record_id || '');
+      if (!id || records.has(id)) throw new AliyunServiceError('查询记录出现重复，请刷新后重试', 'RecordsChanged');
+      records.set(id, record);
+    }
+    if (records.size >= total) break;
+  }
+  if (records.size !== total) throw new AliyunServiceError('解析记录数量发生变化，请刷新后重试', 'RecordsChanged');
+  return { data: [...records.values()], requestId };
+}
+
+function recordContentMatches(value, keyword) {
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'object') return Object.values(value).some(item => recordContentMatches(item, keyword));
+  return String(value).toLowerCase().includes(keyword);
+}
+
+function recordSearchPage(result, options, keyword, domainName = '') {
+  const type = String(options.type || 'all').toUpperCase();
+  const records = result.data.filter(record => {
+    if (type !== 'ALL' && record.type.toUpperCase() !== type) return false;
+    const hostname = record.record_name || (record.rr === '@' ? domainName : `${record.rr}.${domainName}`);
+    return [record.rr, hostname, `${hostname}.`, record.value, record.record_data].some(value => recordContentMatches(value, keyword));
+  });
+  const page = Math.max(1, Number(options.page) || 1);
+  const pageSize = Math.min(500, Math.max(1, Number(options.page_size) || 20));
+  return { data: records.slice((page - 1) * pageSize, page * pageSize), total: records.length, page, page_size: pageSize, requestId: result.requestId };
+}
+
+// 主机名搜索兼容列表中展示的完整域名，以及跨越 RR 与主域名的部分内容。
+function dnsHostKeyword(keyword, domainName) {
+  const domain = domainName.toLowerCase().replace(/\.$/, '');
+  keyword = keyword.replace(/\.$/, '');
+  if (domain.includes(keyword.toLowerCase())) return '';
+  const parts = keyword.split('.');
+  for (let index = 1; index < parts.length; index += 1) {
+    if (domain.startsWith(parts.slice(index).join('.').toLowerCase())) return parts.slice(0, index).join('.');
+  }
+  return keyword;
 }
 
 function isCdnNotOpenedError(error) {
@@ -1217,7 +1278,7 @@ class AliyunService {
     const account = this.getAccount(accountId);
     const keyword = String(options.keyword || '').trim().toLowerCase();
     const page = Math.max(1, Number(options.page) || 1);
-    const pageSize = Math.min(100, Math.max(1, Number(options.page_size) || 20));
+    const pageSize = Math.min(options.include_stat === false ? 1000 : 100, Math.max(1, Number(options.page_size) || 20));
     const buckets = (await this.fetchOssBuckets(account))
       .filter(item => !keyword || item.name.includes(keyword) || item.region.includes(keyword));
     const pageBuckets = buckets.slice((page - 1) * pageSize, page * pageSize);
@@ -1759,12 +1820,15 @@ class AliyunService {
     };
   }
 
-  normalizeEcsInstance(instance, regionId) {
+  normalizeEcsInstance(instance, regionId, regionName = regionId) {
     return {
       source: 'ecs',
       instance_id: instance.instanceId,
       name: instance.instanceName || instance.instanceId,
       region_id: instance.regionId || regionId,
+      region_name: regionName || instance.regionId || regionId,
+      network_type: instance.instanceNetworkType || 'vpc',
+      eip_id: instance.eipAddress && instance.eipAddress.allocationId || '',
       status: instance.status || '',
       os_type: instance.OSType || '',
       os_name: instance.OSName || instance.OSNameEn || '',
@@ -1790,7 +1854,7 @@ class AliyunService {
     };
   }
 
-  normalizeSwasInstance(instance, regionId) {
+  normalizeSwasInstance(instance, regionId, regionName = regionId) {
     const resourceSpec = instance.resourceSpec || {};
     const disks = Array.isArray(instance.disks) ? instance.disks : [];
     const networkAttributes = Array.isArray(instance.networkAttributes) ? instance.networkAttributes : [];
@@ -1802,6 +1866,7 @@ class AliyunService {
       instance_id: instance.instanceId,
       name: instance.instanceName || instance.instanceId,
       region_id: instance.regionId || regionId,
+      region_name: regionName || instance.regionId || regionId,
       status: instance.status || '',
       os_type: instance.image && instance.image.osType || '',
       os_name: instance.image && (instance.image.imageName || instance.image.osName) || '',
@@ -1816,6 +1881,167 @@ class AliyunService {
       charge_type: instance.chargeType || '',
       expired_time: instance.expiredTime || '',
     };
+  }
+
+  async getServerTraffic(accountId, options = {}) {
+    const requested = options.servers;
+    if (!Array.isArray(requested) || !requested.length || requested.length > 20) {
+      throw new AliyunServiceError('单次请选择 1–20 台服务器', 'InvalidTrafficServers');
+    }
+    if (requested.some(server => !server || !['ecs', 'swas'].includes(server.source) || typeof server.region_id !== 'string' || typeof server.instance_id !== 'string')) {
+      throw new AliyunServiceError('服务器流量查询参数不正确', 'InvalidTrafficServers');
+    }
+    const history = options.history === true;
+    const days = history ? 30 : 2;
+    if (days === 30 && requested.length !== 1) {
+      throw new AliyunServiceError('历史流量请逐台查询', 'InvalidTrafficServers');
+    }
+    const account = this.getAccount(accountId);
+    const listed = await this.listServers(accountId);
+    const available = new Map(listed.data.map(server => [serverTrafficKey(server), server]));
+    const keys = unique(requested.map(server => serverTrafficKey(server)));
+    if (keys.some(key => !available.has(key))) {
+      throw new AliyunServiceError('服务器列表已变化，请刷新服务器后重试', 'TrafficServerNotFound');
+    }
+    const range = trafficRange(days);
+    const now = Date.now();
+    for (const [key, value] of serverTrafficCache) {
+      if (now - value.time >= TRAFFIC_ANALYTICS_TTL * 1000) serverTrafficCache.delete(key);
+    }
+    const result = {};
+    const pending = [];
+    for (const key of keys) {
+      const server = available.get(key);
+      const cacheKey = `${accountId}:${key}:${range.today}:${history ? 'history' : 'summary-months'}`;
+      const cached = options.force !== true && serverTrafficCache.get(cacheKey);
+      if (cached) result[key] = cached.data;
+      else pending.push({ server, key, cacheKey });
+    }
+    // ECS 按监控指标分批查询；轻量接口只支持单台实例。
+    const groups = new Map();
+    for (const item of pending) {
+      const server = item.server;
+      const groupKey = server.source === 'swas' ? item.key : server.eip_id ? 'eip' : server.network_type === 'classic' ? 'classic' : 'vpc';
+      if (!groups.has(groupKey)) groups.set(groupKey, []);
+      groups.get(groupKey).push(item);
+    }
+    await Promise.all([...groups.values()].map(async items => {
+      const requestKey = `${accountId}:${range.today}:${history ? 'history' : 'summary-months'}:${items.map(item => item.key).sort().join(',')}`;
+      let request = serverTrafficRequests.get(requestKey);
+      if (!request) {
+        const servers = items.map(item => item.server);
+        request = (history ? this.fetchServerTraffic(account, servers, range) : this.fetchServerTrafficSummary(account, servers, range))
+          .finally(() => serverTrafficRequests.delete(requestKey));
+        serverTrafficRequests.set(requestKey, request);
+      }
+      const data = await request;
+      for (const item of items) {
+        result[item.key] = data[item.key];
+        if (!data[item.key].errors.length) serverTrafficCache.set(item.cacheKey, { time: Date.now(), data: data[item.key] });
+      }
+    }));
+    return { traffic: result };
+  }
+
+  async fetchServerTrafficSummary(account, servers, range) {
+    const monthRange = trafficMonthRange(range.end);
+    // 月度采用小时平均速率减少云监控分页；轻量带宽指标最高支持 900 秒。
+    // 今日/昨日仍使用 900 秒数据，保留原有更新频率。
+    const [daily, monthly] = await Promise.all([
+      this.fetchServerTraffic(account, servers, range),
+      this.fetchServerTraffic(account, servers, monthRange, servers[0].source === 'swas' ? 900 : 3600),
+    ]);
+    return Object.fromEntries(servers.map(server => {
+      const key = serverTrafficKey(server);
+      return [key, {
+        ...daily[key],
+        ...summarizeTrafficMonths(monthly[key].days, monthRange),
+        errors: [...daily[key].errors, ...monthly[key].errors.map(error => ({ ...error, message: `月度流量：${error.message}` }))],
+      }];
+    }));
+  }
+
+  async fetchServerTraffic(account, servers, range, period = 900) {
+    const first = servers[0];
+    const isSwas = first.source === 'swas';
+    const isEip = !isSwas && !!first.eip_id;
+    const isClassic = !isSwas && first.network_type === 'classic';
+    const client = isSwas ? this.createSwasClient(account, first.region_id) : this.createCmsClient(account);
+    const metricNames = isSwas
+      ? ['VPC_PUBLICIP_INTERNETIN_RATE', 'VPC_PUBLICIP_INTERNETOUT_RATE']
+      : isEip ? ['net_rx.rate', 'net_tx.rate']
+        : isClassic ? ['InternetInRate', 'InternetOutRate']
+          : ['VPC_PublicIP_InternetInRate', 'VPC_PublicIP_InternetOutRate'];
+    const responses = await Promise.allSettled(metricNames.map(metricName => this.readServerTrafficMetric(client, {
+      metricName,
+      namespace: isEip ? 'acs_vpc_eip' : 'acs_ecs_dashboard',
+      dimensions: JSON.stringify(servers.map(server => ({ instanceId: isEip ? server.eip_id : server.instance_id }))),
+      regionId: first.region_id,
+      instanceId: first.instance_id,
+      startTime: String(range.start),
+      endTime: String(range.end),
+      period: String(period),
+      length: '1440',
+    }, isSwas)));
+    const errors = responses.flatMap((response, index) => {
+      if (response.status === 'fulfilled') return [];
+      const error = normalizeError(response.reason, 'server');
+      const permission = isSwas ? 'swas-open:DescribeMonitorData' : 'cms:QueryMetricList';
+      return [{ direction: index === 0 ? 'in' : 'out', message: error.status === 'permission_denied' ? `缺少流量监控读取权限，请授予 ${permission}` : error.message, code: error.code, request_id: error.requestId }];
+    });
+    return Object.fromEntries(servers.map(server => {
+      const id = isEip ? server.eip_id : server.instance_id;
+      const directions = responses.map(response => aggregateTraffic(response.status === 'fulfilled'
+        ? response.value.points.filter(point => point && (isSwas || String(point.instanceId || point.InstanceId || '') === id))
+        : [], range, response.status === 'fulfilled' ? response.value.period : period, isEip ? 1 : 1 / 8));
+      const days = combineTraffic(...directions);
+      return [serverTrafficKey(server), {
+        days,
+        today: days[days.length - 1],
+        yesterday: days[days.length - 2],
+        update_time: Date.now(),
+        data_time: Math.max(...days.map(day => day.data_time)),
+        errors,
+        source: isEip ? 'eip' : server.source,
+        note: isEip ? '按当前绑定 EIP 的监控统计；换绑期间的流量可能不属于此服务器' : '',
+      }];
+    }));
+  }
+
+  async readServerTrafficMetric(client, params, isSwas) {
+    const points = [];
+    let period = Number(params.period);
+    // CMS 和轻量接口的单次时间跨度均不得超过 31 天，每段独立分页。
+    for (let start = Number(params.startTime); start < Number(params.endTime);) {
+      const end = Math.min(start + 31 * 86400000, Number(params.endTime));
+      let nextToken = '';
+      const tokens = new Set();
+      do {
+        const requestParams = { ...params, startTime: String(start), endTime: String(end), nextToken: nextToken || undefined };
+        const body = getBody(await runServerTrafficTask(() => this.request(() => isSwas
+          ? client.describeMonitorData(new Swas.DescribeMonitorDataRequest(requestParams))
+          : client.describeMetricList(new Cms.DescribeMetricListRequest(requestParams)), 'server', { retries: READ_RETRY_COUNT })));
+        if (body.success === false || (body.code && String(body.code) !== '200')) {
+          throw new AliyunServiceError(body.message || '服务器流量查询失败', body.code || 'ServerTrafficError', body.requestId || '');
+        }
+        let rows;
+        try { rows = JSON.parse(body.datapoints || '[]'); } catch (_error) { rows = null; }
+        if (!Array.isArray(rows)) throw new AliyunServiceError('服务器流量数据格式不正确', 'InvalidServerTrafficData', body.requestId || '');
+        points.push(...rows);
+        if (body.period) {
+          const actualPeriod = Number(body.period);
+          if (![60, 300, 900, 3600].includes(actualPeriod) || (points.length > rows.length && actualPeriod !== period)) {
+            throw new AliyunServiceError('服务器监控统计周期不一致', 'InvalidServerTrafficPeriod', body.requestId || '');
+          }
+          period = actualPeriod;
+        }
+        nextToken = String(body.nextToken || '');
+        if (nextToken && tokens.has(nextToken)) throw new AliyunServiceError('服务器流量分页游标重复，请重试', 'InvalidTrafficPagination');
+        if (nextToken) tokens.add(nextToken);
+      } while (nextToken);
+      start = end;
+    }
+    return { points, period };
   }
 
   async getEcsDiskTotals(clients, regionId) {
@@ -1858,14 +2084,14 @@ class AliyunService {
           pageNumber: page,
           pageSize: 100,
         })), 'server'));
-        items.push(...(((body.instances || {}).instance || []).map(item => this.normalizeEcsInstance(item, region.region_id))));
+        items.push(...(((body.instances || {}).instance || []).map(item => this.normalizeEcsInstance(item, region.region_id, region.name))));
       } else {
         body = getBody(await this.request(() => swas.listInstances(new Swas.ListInstancesRequest({
           regionId: region.region_id,
           pageNumber: page,
           pageSize: 100,
         })), 'server'));
-        items.push(...((body.instances || []).map(item => this.normalizeSwasInstance(item, region.region_id))));
+        items.push(...((body.instances || []).map(item => this.normalizeSwasInstance(item, region.region_id, region.name))));
       }
       total = Number(body.totalCount || 0);
       page += 1;
@@ -2129,6 +2355,25 @@ class AliyunService {
     return value;
   }
 
+  async getEsaRecordQuota(accountId, siteId) {
+    try {
+      const { esa } = this.createClients(this.getAccount(accountId));
+      const body = getBody(await this.request(() => esa.listInstanceQuotas(new Esa.ListInstanceQuotasRequest({
+        siteId: this.normalizeEsaSiteId(siteId), quotaNames: 'recordCount',
+      })), 'esa'));
+      const quota = (body.quotas || []).find(item => item.quotaName === 'recordCount');
+      const value = String(quota?.quotaValue ?? '').trim();
+      const limit = Number(value);
+      if (!/^\d+$/.test(value) || !Number.isSafeInteger(limit) || quota.quotaValueType && quota.quotaValueType !== 'num') {
+        throw new AliyunServiceError('未取得有效的解析记录上限，请刷新重试', 'UnknownRecordQuota', body.requestId);
+      }
+      return { status: 'known', limit, requestId: body.requestId || '' };
+    } catch (error) {
+      const normalized = normalizeError(error, 'esa');
+      return { status: 'unknown', limit: null, error: normalized.message, errorCode: normalized.code, requestId: normalized.requestId || '' };
+    }
+  }
+
   async getEsaSiteDetail(accountId, siteId) {
     const account = this.getAccount(accountId);
     const { esa } = this.createClients(account);
@@ -2146,6 +2391,7 @@ class AliyunService {
       name_servers: normalizeNameServers(site.nameServerList),
       plan_name: site.planName || '',
       plan_spec_name: site.planSpecName || '',
+      record_quota: await this.getEsaRecordQuota(accountId, siteId),
       instance_id: site.instanceId || '',
       resource_group_id: site.resourceGroupId || '',
       offline_reason: site.offlineReason || '',
@@ -2157,21 +2403,60 @@ class AliyunService {
     };
   }
 
+  clearRecordSearchCache(accountId) {
+    const prefix = `record-search:${accountId}:`;
+    for (const map of [listCache, recordSearchRequests]) {
+      for (const key of map.keys()) if (key.startsWith(prefix)) map.delete(key);
+    }
+  }
+
+  async cachedRecordSearch(cacheKey, loader, force = false) {
+    const now = Math.floor(Date.now() / 1000);
+    for (const [key, value] of listCache) {
+      if (key.startsWith('record-search:') && now - value.time >= RECORD_SEARCH_TTL) listCache.delete(key);
+    }
+    if (force) { listCache.delete(cacheKey); recordSearchRequests.delete(cacheKey); }
+    const cached = listCache.get(cacheKey);
+    if (cached) return cached.data;
+    if (recordSearchRequests.has(cacheKey)) return recordSearchRequests.get(cacheKey);
+    const request = Promise.resolve().then(loader).then(data => {
+      if (recordSearchRequests.get(cacheKey) === request) listCache.set(cacheKey, { time: Math.floor(Date.now() / 1000), data });
+      return data;
+    }).finally(() => {
+      if (recordSearchRequests.get(cacheKey) === request) recordSearchRequests.delete(cacheKey);
+    });
+    recordSearchRequests.set(cacheKey, request);
+    return request;
+  }
+
   async listEsaRecords(accountId, options = {}) {
     const account = this.getAccount(accountId);
+    const keyword = String(options.keyword || '').trim().toLowerCase();
+    if (options.force === true && !keyword) this.clearRecordSearchCache(accountId);
+    if (keyword) {
+      const siteId = this.normalizeEsaSiteId(options.site_id);
+      // ESA ListRecords 不支持按记录值查询，先取齐站点记录再筛选、分页。
+      const result = await this.cachedRecordSearch(`record-search:${accountId}:esa:${siteId}`, () => collectRecordPages(page => this.listEsaRecords(accountId, { site_id: siteId, page, page_size: 500 })), options.force === true);
+      return { ...recordSearchPage(result, options, keyword), site_total: result.data.length };
+    }
     const { esa } = this.createClients(account);
     const request = {
       siteId: this.normalizeEsaSiteId(options.site_id),
       pageNumber: Math.max(1, Number(options.page) || 1),
       pageSize: Math.min(500, Math.max(1, Number(options.page_size) || 20)),
     };
-    const keyword = String(options.keyword || '').trim();
-    if (keyword) {
-      request.recordName = keyword;
-      request.recordMatchType = 'fuzzy';
-    }
     if (options.type && options.type !== 'all') request.type = String(options.type);
     const body = getBody(await this.request(() => esa.listRecords(new Esa.ListRecordsRequest(request)), 'esa'));
+    // 套餐用量按整个站点统计，不使用搜索或类型筛选后的条数。
+    let siteTotal = Number.isSafeInteger(body.totalCount) && body.totalCount >= 0 ? body.totalCount : null;
+    let siteTotalError = '';
+    if (request.type) {
+      try {
+        const countBody = getBody(await this.request(() => esa.listRecords(new Esa.ListRecordsRequest({ siteId: request.siteId, pageNumber: 1, pageSize: 1 })), 'esa'));
+        siteTotal = Number.isSafeInteger(countBody.totalCount) && countBody.totalCount >= 0 ? countBody.totalCount : null;
+      } catch (error) { siteTotal = null; siteTotalError = normalizeError(error, 'esa').message; }
+    }
+    if (siteTotal === null && !siteTotalError) siteTotalError = '未取得有效的站点记录总数，请刷新重试';
     return {
       data: (body.records || []).map(item => ({
         record_id: String(item.recordId || ''),
@@ -2192,12 +2477,63 @@ class AliyunService {
         https_ports: item.httpsPorts || '',
         comment: item.comment || '',
         update_time: item.updateTime || item.createTime || '',
+        record_data: item.data || {},
       })),
       total: Number(body.totalCount || 0),
+      site_total: siteTotal,
+      site_total_error: siteTotalError,
       page: Number(body.pageNumber || request.pageNumber),
       page_size: Number(body.pageSize || request.pageSize),
       requestId: body.requestId || '',
     };
+  }
+
+  async getRecordCheckSnapshot(accountId, options = {}, onPage = () => {}) {
+    if (!['dns', 'esa'].includes(options.provider)) throw new AliyunServiceError('解析检测类型不正确', 'InvalidRecordProvider');
+    const query = options.provider === 'esa'
+      ? { site_id: this.normalizeEsaSiteId(options.site_id) }
+      : { domain_name: String(options.domain_name || '').trim() };
+    const result = await collectRecordPages(async page => {
+      onPage();
+      const response = await (options.provider === 'esa' ? this.listEsaRecords(accountId, { ...query, page, page_size: 500 }) : this.listRecords(accountId, { ...query, page, page_size: 500 }));
+      if (response.total > 10000) throw new AliyunServiceError('单次最多检测 10000 条解析记录', 'TooManyCheckRecords');
+      onPage({ loaded: Math.min(page * 500, response.total), total: response.total });
+      return response;
+    });
+    return result.data;
+  }
+
+  async getEsaRecordExport(accountId, options = {}) {
+    const siteId = this.normalizeEsaSiteId(options.site_id);
+    const selectedIds = options.record_ids === undefined ? null : unique(options.record_ids.map(String));
+    if (selectedIds && (!selectedIds.length || selectedIds.some(id => !/^\d+$/.test(id)))) {
+      throw new AliyunServiceError('请选择要导出的解析记录', 'InvalidExportSelection');
+    }
+    const records = new Map();
+    let total;
+    for (let page = 1; ; page += 1) {
+      const result = await this.listEsaRecords(accountId, {
+        site_id: siteId, page, page_size: 500,
+        keyword: selectedIds ? '' : options.keyword,
+        type: selectedIds ? 'all' : options.type,
+      });
+      if (total === undefined) total = result.total;
+      if (total !== result.total || (records.size < total && !result.data.length)) {
+        throw new AliyunServiceError('解析记录在导出期间发生变化，请刷新后重新导出', 'ExportRecordsChanged');
+      }
+      for (const record of result.data) {
+        if (!record.record_id || records.has(record.record_id)) {
+          throw new AliyunServiceError('导出记录出现重复或缺少记录 ID，请刷新后重试', 'ExportRecordsChanged');
+        }
+        records.set(record.record_id, record);
+      }
+      if (records.size >= total) break;
+    }
+    if (records.size !== total) throw new AliyunServiceError('解析记录数量发生变化，请刷新后重新导出', 'ExportRecordsChanged');
+    const data = selectedIds ? selectedIds.map(id => records.get(id)) : [...records.values()];
+    if (data.some(record => !record)) throw new AliyunServiceError('勾选的记录已被删除，请刷新后重新选择', 'ExportRecordsChanged');
+    if (!data.length) throw new AliyunServiceError('当前筛选条件下没有可导出的记录', 'EmptyExport');
+    return data;
   }
 
   normalizeEsaRecordData(data, currentData = {}) {
@@ -2314,6 +2650,7 @@ class AliyunService {
       proxied: proxied === true,
     }, record);
     const body = getBody(await this.request(() => esa.updateRecord(new Esa.UpdateRecordRequest({ recordId: Number(record.recordId), ...request })), 'esa'));
+    this.clearAccountCache(accountId);
     return { record_id: String(record.recordId), proxied: proxied === true, requestId: body.requestId || '' };
   }
 
@@ -2691,9 +3028,46 @@ class AliyunService {
     return trackedRequest;
   }
 
+  async getEsaAnalyticsCapabilities(accountId, siteId, force = false) {
+    const normalizedSiteId = this.normalizeEsaSiteId(siteId);
+    const cacheKey = `esa-capabilities:${accountId}:${normalizedSiteId}`;
+    const now = Math.floor(Date.now() / 1000);
+    const cached = listCache.get(cacheKey);
+    if (!force && cached && now - cached.time < TRAFFIC_ANALYTICS_TTL) return cached.data;
+    if (esaCapabilityRequests.has(cacheKey)) return esaCapabilityRequests.get(cacheKey);
+    const request = (async () => {
+      try {
+        const { esa } = this.createClients(this.getAccount(accountId));
+        const body = getBody(await this.request(() => esa.listInstanceQuotas(new Esa.ListInstanceQuotasRequest({
+          siteId: normalizedSiteId, quotaNames: 'data_timerange',
+        })), 'esa'));
+        const quota = (body.quotas || []).find(item => item.quotaName === 'data_timerange');
+        const minutes = Number(quota && quota.quotaValue);
+        if (!Number.isFinite(minutes) || minutes <= 0) {
+          throw new AliyunServiceError('未取得有效的监控查询额度，可重试或直接查询监控数据', 'UnknownAnalyticsQuota', body.requestId);
+        }
+        const data = { status: 'known', max_minutes: minutes, instance_status: body.status || '', requestId: body.requestId || '' };
+        listCache.set(cacheKey, { time: Math.floor(Date.now() / 1000), data });
+        return data;
+      } catch (error) {
+        const normalized = normalizeError(error, 'esa');
+        const data = { status: 'unknown', max_minutes: null, error: normalized.message, errorCode: normalized.code, requestId: normalized.requestId || '' };
+        // 失败也缓存，避免无配额查询权限时每次刷新都重复请求；用户仍可主动重试。
+        listCache.set(cacheKey, { time: Math.floor(Date.now() / 1000), data });
+        return data;
+      }
+    })().finally(() => esaCapabilityRequests.delete(cacheKey));
+    esaCapabilityRequests.set(cacheKey, request);
+    return request;
+  }
+
   async getEsaTrafficAnalytics(accountId, options = {}) {
     const siteId = this.normalizeEsaSiteId(options.site_id);
     const range = normalizeAnalyticsRange(options);
+    const capabilities = await this.getEsaAnalyticsCapabilities(accountId, siteId, options.force === true);
+    if (capabilities.status === 'known' && range.end - range.start > capabilities.max_minutes * 60000) {
+      throw new AliyunServiceError(`当前站点监控最多查询 ${Number((capabilities.max_minutes / 1440).toFixed(2))} 天，请缩短时间范围`, 'AnalyticsRangeNotSupported');
+    }
     const cacheKey = `traffic-analytics:esa:${accountId}:${siteId}:${analyticsCacheRangeKey(range, options)}:${range.interval}`;
     const now = Math.floor(Date.now() / 1000);
     if (options.force === true) listCache.delete(cacheKey);
@@ -2806,6 +3180,7 @@ class AliyunService {
       errorCode: result.error.code,
       requestId: result.error.requestId,
     }));
+    const succeeded = name => !!taskResults.find(result => result.name === name)?.body;
     const body = name => taskResults.find(result => result.name === name)?.body || {};
     const timeBodies = taskResults.filter(result => result.type === 'time_series' && result.body).map(result => result.body);
     const rows = timeBodies.flatMap(item => item.data || []);
@@ -2839,16 +3214,16 @@ class AliyunService {
       qps: point.requests / interval,
     }));
     const summary = {
-      traffic: trafficTotal,
-      requests: requestTotal,
-      peak_bandwidth: Math.max(0, ...trend.map(point => point.bandwidth)),
-      peak_qps: Math.max(0, ...trend.map(point => point.qps)),
+      traffic: succeeded('summary') ? trafficTotal : null,
+      requests: succeeded('summary') ? requestTotal : null,
+      peak_bandwidth: succeeded('summary') ? Math.max(0, ...trend.map(point => point.bandwidth)) : null,
+      peak_qps: succeeded('summary') ? Math.max(0, ...trend.map(point => point.qps)) : null,
       cache_hit_rate: cacheTotal ? cacheHits / cacheTotal * 100 : null,
       origin_traffic: null,
       origin_ratio: null,
-      error_4xx_rate: statusRate(edgeStatusRows, '4'),
-      error_5xx_rate: statusRate(edgeStatusRows, '5'),
-      origin_5xx_rate: statusRate(originStatusRows, '5'),
+      error_4xx_rate: succeeded('edge_status') ? statusRate(edgeStatusRows, '4') : null,
+      error_5xx_rate: succeeded('edge_status') ? statusRate(edgeStatusRows, '5') : null,
+      origin_5xx_rate: succeeded('origin_status') ? statusRate(originStatusRows, '5') : null,
     };
     const rankingRows = (name, limit = 10) => {
       const task = topMetrics.find(item => item.name === name);
@@ -3232,6 +3607,23 @@ class AliyunService {
     const domainName = String(options.domain_name || '').trim();
     if (!domainName) throw new AliyunServiceError('请选择域名', 'DomainRequired');
     const account = this.getAccount(accountId);
+    const keyword = String(options.keyword || '').trim();
+    if (options.force === true && !keyword) this.clearRecordSearchCache(accountId);
+    const type = options.type && options.type !== 'all' ? String(options.type).toUpperCase() : '';
+    if (keyword && !['host', 'value'].includes(options.search_field)) {
+      const cacheKey = `record-search:${accountId}:dns:${JSON.stringify([domainName, type, keyword.toLowerCase()])}`;
+      const result = await this.cachedRecordSearch(cacheKey, async () => {
+        // 两个查询分别匹配主机名和记录值，按 OR 合并；同时传两个条件会变成 AND。
+        const matches = await Promise.all(['host', 'value'].map(searchField => collectRecordPages(page => this.listRecords(accountId, {
+          domain_name: domainName, keyword: searchField === 'host' ? dnsHostKeyword(keyword, domainName) : keyword,
+          type: type || 'all', search_field: searchField, page, page_size: 500,
+        }))));
+        const merged = new Map();
+        matches.forEach(match => match.data.forEach(record => merged.set(String(record.record_id), record)));
+        return { data: [...merged.values()], requestId: matches[0].requestId || matches[1].requestId };
+      }, options.force === true);
+      return recordSearchPage(result, options, keyword.toLowerCase(), domainName);
+    }
     const { dns } = this.createClients(account);
     const request = {
       domainName,
@@ -3239,15 +3631,9 @@ class AliyunService {
       pageSize: Math.min(500, Math.max(1, Number(options.page_size) || 20)),
       lang: 'zh',
     };
-    const keyword = String(options.keyword || '').trim();
-    const type = options.type && options.type !== 'all' ? String(options.type) : '';
-    if (type) {
-      request.type = type;
-      request.searchMode = 'ADVANCED';
-      if (keyword) request.RRKeyWord = keyword;
-    } else if (keyword) {
-      request.keyWord = keyword;
-    }
+    if (type) request.type = type;
+    if (type || keyword) request.searchMode = 'ADVANCED';
+    if (keyword) request[options.search_field === 'value' ? 'valueKeyWord' : 'RRKeyWord'] = keyword;
     const response = await this.request(() => dns.describeDomainRecords(new AliDns.DescribeDomainRecordsRequest(request)), 'domain');
     const body = getBody(response);
     return {
@@ -3500,9 +3886,14 @@ class AliyunService {
   }
 
   clearAccountCache(accountId) {
+    this.clearRecordSearchCache(accountId);
+    for (const key of serverTrafficCache.keys()) {
+      if (key.startsWith(`${accountId}:`)) serverTrafficCache.delete(key);
+    }
     listCache.delete(`servers:${accountId}`);
     listCache.delete(`registered-domains:${accountId}`);
     for (const key of listCache.keys()) {
+      if (key.startsWith(`esa-capabilities:${accountId}:`)) listCache.delete(key);
       if (key.startsWith(`oss-traffic:${accountId}:`)) listCache.delete(key);
       if (key.startsWith(`traffic-analytics:esa:${accountId}:`) || key.startsWith(`esa-url-rankings:${accountId}:`)) listCache.delete(key);
     }

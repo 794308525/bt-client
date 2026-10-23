@@ -4,6 +4,13 @@ const { Controller } = require('ee-core');
 const { dialog } = require('electron');
 const Electron = require('ee-core/electron');
 const path = require('path');
+const fs = require('fs');
+const { randomBytes } = require('crypto');
+const { buildEsaRecordExport } = require('../service/aliyun-record-export');
+const { dnsRecordPreview } = require('../service/dns-record-preview');
+const { recordCheckService } = require('../service/dns-record-check');
+const { serverAllowanceService } = require('../service/server-allowance');
+const { serverSshService } = require('../service/server-ssh');
 const { pub } = require('../class/public.js');
 const { aliyunService, normalizeError } = require('../service/aliyun.js');
 
@@ -70,6 +77,17 @@ class AliyunController extends Controller {
     } catch (error) {
       return sendAliyunError(event, args.channel, error);
     }
+  }
+
+  // 仅由用户主动查看凭据或编辑账号时调用，不并入账号列表和概览。
+  async credentials(args, event) {
+    try {
+      const account = aliyunService.getAccount(args.data.account_id);
+      if ([account.access_key_id, account.access_key_secret].some(value => String(value).startsWith('BTx:'))) {
+        return pub.send_error_msg(event, args.channel, pub.lang('无法读取账号凭据，请解锁客户端或重新保存凭据'));
+      }
+      return pub.send_success(event, args.channel, { access_key_id: account.access_key_id, access_key_secret: account.access_key_secret });
+    } catch (error) { return sendAliyunError(event, args.channel, error); }
   }
 
   async cache_info(args, event) {
@@ -180,6 +198,10 @@ class AliyunController extends Controller {
       return pub.send_error_msg(event, args.channel, pub.lang('指定阿里云账号不存在'));
     }
     const removed = pub.M(this.TABLE).where('account_id=?', accountId).delete();
+    if (removed) {
+      serverSshService.cancelAccount(accountId);
+      pub.M('aliyun_ssh_credential').where('account_id=?', accountId).delete();
+    }
     aliyunService.clearAccountCache(accountId);
     aliyunService.clearEsaUrlRankingDiskCache(accountId);
     return removed
@@ -246,6 +268,23 @@ class AliyunController extends Controller {
     }
   }
 
+  async server_traffic(args, event) {
+    try {
+      const data = await aliyunService.getServerTraffic(args.data.account_id, args.data);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async server_allowance(args, event) {
+    try {
+      return pub.send_success(event, args.channel, await serverAllowanceService.get(args.data.account_id, args.data));
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
   async domain_list(args, event) {
     try {
       const data = await aliyunService.listDomains(args.data.account_id, args.data);
@@ -253,6 +292,31 @@ class AliyunController extends Controller {
     } catch (error) {
       return sendAliyunError(event, args.channel, error);
     }
+  }
+
+  async record_preview(args, event) {
+    try { return pub.send_success(event, args.channel, dnsRecordPreview.open(args.data.hostname)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async record_check_start(args, event) {
+    try { return pub.send_success(event, args.channel, recordCheckService.start(args.data.account_id, args.data, event.sender)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async record_check_status(args, event) {
+    try { return pub.send_success(event, args.channel, recordCheckService.status(args.data.account_id, args.data.job_id, event.sender.id, args.data.after)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async record_check_stop(args, event) {
+    try { return pub.send_success(event, args.channel, recordCheckService.cancel(args.data.account_id, args.data.job_id, event.sender.id)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async record_check_delete(args, event) {
+    try { return pub.send_success(event, args.channel, await recordCheckService.remove(args.data.account_id, args.data.job_id, event.sender.id, args.data.record_ids)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
   }
 
   async domain_info(args, event) {
@@ -288,6 +352,33 @@ class AliyunController extends Controller {
       return pub.send_success(event, args.channel, data);
     } catch (error) {
       return sendAliyunError(event, args.channel, error);
+    }
+  }
+
+  async esa_record_export(args, event) {
+    let temporaryPath;
+    try {
+      const format = String(args.data.format || '');
+      if (!['txt', 'xlsx'].includes(format)) throw new Error('请选择 TXT 或 Excel 格式');
+      if (args.data.record_ids !== undefined && !Array.isArray(args.data.record_ids)) throw new Error('勾选记录参数不正确');
+      const records = await aliyunService.getEsaRecordExport(args.data.account_id, args.data);
+      const selected = await dialog.showSaveDialog(Electron.mainWindow, {
+        title: pub.lang('导出 ESA 解析记录'),
+        defaultPath: `esa-records-${args.data.site_id}.${format}`,
+        filters: [{ name: format === 'xlsx' ? 'Excel' : 'TXT', extensions: [format] }],
+      });
+      if (selected.canceled || !selected.filePath) return pub.send_success(event, args.channel, { canceled: true });
+      const destination = path.extname(selected.filePath) ? selected.filePath : `${selected.filePath}.${format}`;
+      if (path.extname(destination).toLowerCase() !== `.${format}`) throw new Error(`保存文件的扩展名必须为 .${format}`);
+      const buffer = await buildEsaRecordExport(records, format);
+      temporaryPath = `${destination}.${randomBytes(8).toString('hex')}.tmp`;
+      await fs.promises.writeFile(temporaryPath, buffer, { flag: 'wx', mode: 0o600 });
+      await fs.promises.rename(temporaryPath, destination);
+      return pub.send_success(event, args.channel, { canceled: false, path: destination, count: records.length });
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    } finally {
+      if (temporaryPath) await fs.promises.unlink(temporaryPath).catch(() => {});
     }
   }
 
@@ -352,6 +443,13 @@ class AliyunController extends Controller {
     } catch (error) {
       return sendAliyunError(event, args.channel, error);
     }
+  }
+
+  async esa_analytics_capabilities(args, event) {
+    try {
+      const data = await aliyunService.getEsaAnalyticsCapabilities(args.data.account_id, args.data.site_id, args.data.force === true);
+      return pub.send_success(event, args.channel, data);
+    } catch (error) { return sendAliyunError(event, args.channel, error); }
   }
 
   async esa_traffic_analytics(args, event) {
@@ -599,6 +697,31 @@ class AliyunController extends Controller {
     } catch (error) {
       return sendAliyunError(event, args.channel, error);
     }
+  }
+
+  async ssh_prepare(args, event) {
+    try { return pub.send_success(event, args.channel, await serverSshService.prepare(event.sender, args.data)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async ssh_connect(args, event) {
+    try { return pub.send_success(event, args.channel, await serverSshService.connect(event.sender.id, args.data)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async ssh_diagnose(args, event) {
+    try { return pub.send_success(event, args.channel, await serverSshService.diagnose(event.sender.id, args.data)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async ssh_authorize(args, event) {
+    try { return pub.send_success(event, args.channel, await serverSshService.authorize(event.sender.id, args.data)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async ssh_cancel(args, event) {
+    serverSshService.cancel(event.sender.id, args.data.job_id);
+    return pub.send_success(event, args.channel, {});
   }
 
   async open_swas_workbench(args, event) {

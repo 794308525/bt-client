@@ -12,6 +12,7 @@ const Mstsc = require('../class/mstsc.js');
 const os = require("os")
 const { aliyunService, normalizeError } = require('../service/aliyun.js');
 const { AliyunCliSession } = require('../service/aliyun-cli.js');
+const { serverSshService } = require('../service/server-ssh');
 
 const TermItems = {};
 global.active_ssh_id = 0;
@@ -959,6 +960,14 @@ class TermController extends Controller {
 	 */
 	async connect(args, event) {
 		let channel = args.channel;
+		if (args.data?.transport === 'cloud-ssh') {
+			try {
+				if (TermItems[channel]) TermItems[channel].disconnect();
+				const service = serverSshService;
+				TermItems[channel] = service.consume(event.sender.id, args.data.ticket, channel, event.sender);
+			} catch (error) { return pub.send_error_msg(event, channel, error.message); }
+			return;
+		}
 		if (args.data && args.data.transport === 'aliyun-session') {
 			try {
 				const sessionData = args.data;

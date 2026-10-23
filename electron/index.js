@@ -3,6 +3,8 @@ const { ContextMenu } = require('./class/menu.js');
 const { pub } = require('./class/public.js');
 const Electron = require('ee-core/electron');
 const { sslDeployService } = require('./service/ssl-deploy.js');
+const { recordCheckService } = require('./service/dns-record-check.js');
+const { serverSshService } = require('./service/server-ssh.js');
 
 
 class Index extends Application {
@@ -157,6 +159,8 @@ class Index extends Application {
   async beforeClose() {
     // do some things
     sslDeployService.stop();
+    recordCheckService.stopAll();
+    serverSshService.stopAll();
     // 记忆当前窗口大小和位置
     let win = this.electron.mainWindow;
     if (!win.isMaximized()) {

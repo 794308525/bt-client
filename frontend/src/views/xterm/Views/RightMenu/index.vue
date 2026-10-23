@@ -1,5 +1,5 @@
 <template>
-	<el-tabs tab-position="right" class="menu-vertical" v-model="activeName" @tab-click="handleClick">
+	<el-tabs v-if="data?.transport !== 'cloud-ssh'" tab-position="right" class="menu-vertical" v-model="activeName" @tab-click="handleClick">
 		<el-tab-pane :label="pub.lang('监控')" name="monitor"><monitor :data="data" /></el-tab-pane>
 		<el-tab-pane :label="pub.lang('录像审计')" name="record"
 			><record :data="data" @refresh="refresh" v-if="activeName === 'record'"

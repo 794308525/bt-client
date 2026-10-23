@@ -654,6 +654,7 @@ const routes = {
 			method: 'ipc',
 			path: 'controller.aliyun.find',
 		},
+		credentials: { title: '查看阿里云账号凭据', method: 'ipc', path: 'controller.aliyun.credentials' },
 		refresh_account_summary: {
 			title: '刷新阿里云账号资源统计',
 			method: 'ipc',
@@ -669,6 +670,21 @@ const routes = {
 			method: 'ipc',
 			path: 'controller.aliyun.server_list',
 		},
+		server_traffic: {
+			title: '获取阿里云服务器流量统计',
+			method: 'ipc',
+			path: 'controller.aliyun.server_traffic',
+		},
+		server_allowance: {
+			title: '获取阿里云流量额度和套餐',
+			method: 'ipc',
+			path: 'controller.aliyun.server_allowance',
+		},
+		ssh_prepare: { title: '准备阿里云 SSH 连接', method: 'ipc', path: 'controller.aliyun.ssh_prepare' },
+		ssh_connect: { title: '建立阿里云 SSH 连接', method: 'ipc', path: 'controller.aliyun.ssh_connect' },
+		ssh_diagnose: { title: '检查阿里云 SSH 安全组', method: 'ipc', path: 'controller.aliyun.ssh_diagnose' },
+		ssh_authorize: { title: '确认放行阿里云 SSH 端口', method: 'ipc', path: 'controller.aliyun.ssh_authorize' },
+		ssh_cancel: { title: '取消阿里云 SSH 连接', method: 'ipc', path: 'controller.aliyun.ssh_cancel' },
 		domain_list: {
 			title: '获取阿里云域名列表',
 			method: 'ipc',
@@ -699,6 +715,13 @@ const routes = {
 			method: 'ipc',
 			path: 'controller.aliyun.esa_record_add',
 		},
+		esa_record_export: { title: '导出 ESA 解析记录', method: 'ipc', path: 'controller.aliyun.esa_record_export' },
+		record_preview: { title: '预览解析记录网站', method: 'ipc', path: 'controller.aliyun.record_preview' },
+		record_check_start: { title: '检测解析记录', method: 'ipc', path: 'controller.aliyun.record_check_start' },
+		record_check_status: { title: '获取解析检测进度', method: 'ipc', path: 'controller.aliyun.record_check_status' },
+		record_check_stop: { title: '停止解析检测', method: 'ipc', path: 'controller.aliyun.record_check_stop' },
+		record_check_delete: { title: '删除检测中勾选的解析记录', method: 'ipc', path: 'controller.aliyun.record_check_delete' },
+		esa_analytics_capabilities: { title: '获取 ESA 监控查询额度', method: 'ipc', path: 'controller.aliyun.esa_analytics_capabilities' },
 		esa_record_update: {
 			title: '修改阿里云 ESA 解析记录',
 			method: 'ipc',

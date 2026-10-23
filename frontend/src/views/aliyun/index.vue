@@ -90,7 +90,6 @@
 							</div>
 							<div class="min-w-0">
 								<div class="aliyun-card__remark" :title="account.remark">{{ account.remark }}</div>
-								<div class="aliyun-card__key">{{ maskAccessKey(account.access_key_id) }}</div>
 							</div>
 						</div>
 						<el-dropdown
@@ -106,6 +105,10 @@
 						</el-dropdown>
 					</div>
 				</template>
+				<div class="aliyun-card__credentials">
+					<CloudCredential label="AccessKey ID" :value="account.access_key_id" :reset-key="credentialReset" />
+					<CloudCredential label="AccessKey Secret" :load-value="() => readSecret(account.account_id)" :reset-key="credentialReset" />
+				</div>
 
 				<div class="aliyun-balance">
 					<strong>{{ formatBalance(account.balance) }}</strong>
@@ -162,8 +165,10 @@
 			draggable
 			:close-on-click-modal="false"
 			:title="editingAccountId ? pub.lang('编辑阿里云账号') : pub.lang('添加阿里云账号')"
+			@close="clearCredentialValues"
 			@closed="resetAccountForm">
 			<el-form
+				v-loading="credentialsLoading"
 				ref="accountFormRef"
 				:model="accountForm"
 				:rules="accountRules"
@@ -178,6 +183,7 @@
 				</el-form-item>
 				<el-form-item :label="pub.lang('AccessKey ID')" prop="access_key_id">
 					<el-input
+						:key="'id-' + accountDialogVisible + '-' + editingAccountId"
 						v-model="accountForm.access_key_id"
 						type="password"
 						show-password
@@ -186,6 +192,7 @@
 				</el-form-item>
 				<el-form-item :label="pub.lang('AccessKey Secret')" prop="access_key_secret">
 					<el-input
+						:key="'secret-' + accountDialogVisible + '-' + editingAccountId"
 						v-model="accountForm.access_key_secret"
 						type="password"
 						show-password
@@ -206,7 +213,7 @@
 			</el-form>
 			<template #footer>
 				<el-button @click="accountDialogVisible = false">{{ pub.lang('取消') }}</el-button>
-				<el-button type="primary" :loading="accountSaving" @click="saveAccount">
+				<el-button type="primary" :loading="accountSaving" :disabled="credentialsLoading" @click="saveAccount">
 					{{ pub.lang('保存') }}
 				</el-button>
 			</template>
@@ -255,6 +262,7 @@ import { ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { common, ipc, routes } from '@api/http'
 import { useMessage } from '@utils/hooks/message'
 import { pub } from '@utils/tools'
+import CloudCredential from '@/components/CloudCredential/index.vue'
 
 interface AliyunGroup {
 	group_id: number
@@ -333,6 +341,9 @@ watch(sortMode, () => updateSegmentIndicator(sortSegmentRef, sortIndicatorStyle)
 const accountDialogVisible = ref(false)
 const accountSaving = ref(false)
 const editingAccountId = ref(0)
+const credentialsLoading = ref(false)
+const credentialReset = ref(0)
+let credentialRequestId = 0
 const accountFormRef = ref<FormInstance>()
 const createAccountForm = () => ({
 	remark: '',
@@ -405,6 +416,7 @@ const getAccountList = async () => {
 	const result = await request(routes.aliyun.list.path)
 	if (!result?.status) return Message.request(result)
 	accountList.value = result.data.data || []
+	credentialReset.value++
 	groupList.value = result.data.groups || []
 	if (!groupList.value.some(group => group.group_id === currentGroup.value)) currentGroup.value = -1
 	const now = Math.floor(Date.now() / 1000)
@@ -576,7 +588,19 @@ const refreshAllAccounts = async () => {
 	}
 }
 
-const openAccountDialog = (account?: AliyunAccount) => {
+const readCredentials = async (accountId: number): Promise<{ access_key_id: string; access_key_secret: string }> => {
+	const result = await request(routes.aliyun.credentials.path, { account_id: accountId })
+	if (!result?.status) throw new Error(result?.msg || pub.lang('凭据读取失败'))
+	return result.data
+}
+const readSecret = async (accountId: number) => (await readCredentials(accountId)).access_key_secret
+const clearCredentialValues = () => {
+	credentialRequestId++
+	credentialReset.value++
+	credentialsLoading.value = false
+	accountForm.access_key_secret = ''
+}
+const openAccountDialog = async (account?: AliyunAccount) => {
 	resetAccountForm()
 	if (account) {
 		editingAccountId.value = account.account_id
@@ -585,16 +609,29 @@ const openAccountDialog = (account?: AliyunAccount) => {
 		accountForm.group_id = account.group_id
 	}
 	accountDialogVisible.value = true
+	if (!account) return
+	const id = ++credentialRequestId
+	credentialsLoading.value = true
+	try {
+		const credentials = await readCredentials(account.account_id)
+		if (id === credentialRequestId && accountDialogVisible.value) {
+			accountForm.access_key_id = credentials.access_key_id
+			accountForm.access_key_secret = credentials.access_key_secret
+		}
+	} catch (error) {
+		if (id === credentialRequestId && accountDialogVisible.value) Message.error(error instanceof Error ? error.message : pub.lang('凭据读取失败'))
+	} finally { if (id === credentialRequestId) credentialsLoading.value = false }
 }
 
 const resetAccountForm = () => {
+	clearCredentialValues()
 	editingAccountId.value = 0
 	Object.assign(accountForm, createAccountForm())
 	accountFormRef.value?.clearValidate()
 }
 
 const saveAccount = async () => {
-	if (!accountFormRef.value) return
+	if (!accountFormRef.value || credentialsLoading.value) return
 	const valid = await accountFormRef.value.validate().catch(() => false)
 	if (!valid) return
 
@@ -677,12 +714,6 @@ const removeGroup = async (group: AliyunGroup) => {
 	if (result?.status) await getAccountList()
 }
 
-const maskAccessKey = (accessKey: string) => {
-	if (!accessKey) return '--'
-	if (accessKey.length <= 8) return `${accessKey.slice(0, 3)}****`
-	return `${accessKey.slice(0, 5)}****${accessKey.slice(-4)}`
-}
-
 const formatBalance = (balance: string) => {
 	if (balance === '' || balance === null || balance === undefined) return pub.lang('待获取')
 	return `¥ ${balance}`
@@ -738,6 +769,7 @@ onMounted(() => {
 	updateSegmentIndicator(sortSegmentRef, sortIndicatorStyle)
 })
 onBeforeUnmount(() => {
+	clearCredentialValues()
 	window.removeEventListener('keydown', handleRefreshShortcut, true)
 	ipc.removeListener('aliyun-refresh', handleIpcRefresh)
 	if (dragMoveFrame !== null) cancelAnimationFrame(dragMoveFrame)
@@ -746,6 +778,8 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped lang="scss">
+@use '../../styles/cloud-layout' as cloud;
+
 .aliyun-page {
 	min-height: 100%;
 	padding: 2.4rem 3.6rem 3.6rem;
@@ -920,28 +954,16 @@ onBeforeUnmount(() => {
 }
 
 .aliyun-grid {
-	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(29rem, 1fr));
-	gap: 1.6rem;
+	@include cloud.account-grid;
 }
 
 .aliyun-card {
-	border-radius: 0.8rem;
-	cursor: pointer;
-	transition: border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+	@include cloud.account-card;
 
 	&--dragging {
 		opacity: 0.25;
 	}
 
-	:deep(.el-card__header) {
-		padding: 1.25rem 1.5rem;
-		border-bottom: 0;
-	}
-
-	:deep(.el-card__body) {
-		padding: 0 1.5rem 1.25rem;
-	}
 }
 
 .aliyun-card__header {
@@ -987,11 +1009,8 @@ onBeforeUnmount(() => {
 	white-space: nowrap;
 }
 
-.aliyun-card__key {
-	margin-top: 0.15rem;
-	color: var(--el-text-color-secondary);
-	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-	font-size: 1.15rem;
+.aliyun-card__credentials {
+	padding: 0.2rem 0 0.6rem;
 }
 
 .aliyun-card__more {

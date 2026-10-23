@@ -142,7 +142,14 @@ export class TerminalManager {
 		this.terminal.open(this.terminalDom)
 		this.resizeTerminal()
 		ipc.on(this.channel, (event: any, arg: any) => {
-			const isObject = arg !== null && typeof arg === 'object'
+			if (arg?.type === 'cloud-ssh-ready') {
+				this.isConnected = true
+				this._status = 'success'
+				this.resizeTerminal(100)
+				this.callback?.({ status: 'success' })
+				return
+			}
+			const isObject = arg !== null && typeof arg === 'object' && !ArrayBuffer.isView(arg) && !(arg instanceof ArrayBuffer)
 			const text = typeof arg === 'string' ? arg : ''
 			const message = isObject && arg.data && typeof arg.data.msg === 'string'
 				? arg.data.msg
@@ -169,7 +176,7 @@ export class TerminalManager {
 
 			// 获取最后一次的时间戳
 			var _time = new Date().getTime()
-			if (_time - this._last_time > 1000) {
+			if (this._status !== 'danger' && _time - this._last_time > 1000) {
 				// 通过 this._status 控制闪烁
 				this._status = 'warning'
 				this._last_time = _time

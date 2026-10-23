@@ -1,13 +1,9 @@
 <template>
-	<div class="traffic-analytics" v-loading="loading">
+	<div class="traffic-analytics">
 		<div class="traffic-toolbar">
 			<div class="traffic-toolbar__filters">
 				<el-radio-group v-model="range" size="small" @change="loadAnalytics()">
-					<el-radio-button label="today">{{ pub.lang('今天') }}</el-radio-button>
-					<el-radio-button label="yesterday">{{ pub.lang('昨天') }}</el-radio-button>
-					<el-radio-button label="24h">{{ pub.lang('近 24 小时') }}</el-radio-button>
-					<el-radio-button label="7d">7 {{ pub.lang('天') }}</el-radio-button>
-					<el-radio-button label="30d">30 {{ pub.lang('天') }}</el-radio-button>
+					<el-tooltip v-for="option in rangeOptions" :key="option.key" :content="rangeHint(option.key)" :disabled="!rangeHint(option.key)"><el-radio-button :label="option.key" :disabled="rangeDisabled(option.key)">{{ option.label }}</el-radio-button></el-tooltip>
 				</el-radio-group>
 				<el-select v-if="product === 'cdn'" v-model="domainName" clearable filterable :placeholder="pub.lang('全部加速域名')" @change="loadAnalytics()">
 					<el-option v-for="domain in domains" :key="domain" :label="domain" :value="domain" />
@@ -16,16 +12,22 @@
 			<div class="traffic-toolbar__meta">
 				<span v-if="data?.update_time">{{ data.cached ? pub.lang('缓存数据') : pub.lang('监控数据') }} · {{ formatTime(data.update_time) }}</span>
 				<el-tooltip :content="pub.lang('阿里云监控数据可能延迟数分钟，不等同于账单计费口径')" placement="top"><el-icon><InfoFilled /></el-icon></el-tooltip>
-				<el-button circle :icon="Refresh" :loading="loading" @click="loadAnalytics(true)" />
+				<el-button circle :icon="Refresh" :loading="loading" @click="refreshAnalytics" />
 			</div>
 		</div>
 
+		<div v-if="product === 'esa'" class="traffic-quota">
+			<span v-if="capabilitiesLoading">{{ pub.lang('正在读取监控查询额度') }}</span>
+			<span v-else-if="capabilities?.status === 'known'">{{ pub.lang(`当前站点监控最多查询 ${quotaDays} 天，单次最多 31 天`) }}</span>
+			<template v-else><span>{{ pub.lang('监控额度未确认，可尝试查询') }} · {{ capabilities?.error }}</span><el-button link type="primary" @click="loadCapabilities(true)">{{ pub.lang('重试') }}</el-button></template>
+		</div>
+		<el-alert v-if="analyticsError" type="error" :closable="false" show-icon class="traffic-partial" :title="analyticsError" />
 		<el-alert v-if="data?.partial" type="warning" :closable="false" show-icon class="traffic-partial" :title="`${data.errors.length} ${pub.lang('项监控指标获取失败，已展示其余可用数据')}`" />
 		<div v-if="data?.alerts.length" class="traffic-alerts">
 			<el-alert v-for="alert in data.alerts" :key="alert.message" :type="alert.level" :closable="false" show-icon :title="alert.message" />
 		</div>
 
-		<div class="traffic-metrics">
+		<div v-loading="loading" class="traffic-metrics">
 			<button v-for="metric in metricCards" :key="metric.key" type="button" class="traffic-metric" :class="{ active: activeMetric === metric.key, warning: metric.warning }" @click="selectMetric(metric.key)">
 				<span>{{ metric.label }}</span>
 				<strong>{{ metric.value }}</strong>
@@ -34,7 +36,7 @@
 		</div>
 
 		<div class="traffic-content">
-			<section class="traffic-chart-card">
+			<section v-loading="loading" class="traffic-chart-card">
 				<header>
 					<div><h4>{{ activeMetricLabel }}{{ pub.lang('趋势') }}</h4><p>{{ rangeText }} · {{ intervalText }}</p></div>
 					<strong>{{ chartPeakText }}</strong>
@@ -72,11 +74,14 @@
 					<el-tab-pane v-if="product === 'esa'" :label="pub.lang('地区')" name="regions" />
 				</el-tabs>
 				<div v-if="product === 'esa' && isUrlRanking" class="traffic-ranking-filter">
-					<el-select v-model="domainName" filterable :placeholder="pub.lang('先选择域名')" @change="loadEsaUrlRankings()">
+					<el-select v-model="domainName" filterable allow-create default-first-option :placeholder="pub.lang('选择或输入当前站点的域名')" @change="loadEsaUrlRankings()">
 						<el-option v-for="domain in esaDomainOptions" :key="domain" :label="domain" :value="domain" />
 					</el-select>
+					<el-select v-model="urlRange" class="traffic-log-range" :placeholder="pub.lang('日志时间范围')" @change="loadEsaUrlRankings()"><el-option v-for="option in rangeOptions" :key="option.key" :value="option.key" :label="option.label" /></el-select>
 					<el-button :icon="Refresh" :loading="urlRankingLoading" :disabled="!domainName || urlRankingLoading" @click="loadEsaUrlRankings(true)" />
 				</div>
+				<p v-if="product === 'esa' && isUrlRanking" class="traffic-log-hint">{{ pub.lang('日志时间范围独立于监控，最多查询最近 31 天') }}</p>
+				<el-alert v-if="product === 'esa' && isUrlRanking && urlRankingError" type="error" :closable="false" class="traffic-ranking-notice" :title="urlRankingError" />
 				<div v-if="product === 'esa' && isUrlRanking && urlRankingLoading && urlRankingProgress" class="traffic-ranking-progress">
 					<div class="traffic-ranking-progress__title">
 						<strong>{{ urlRankingProgress.message || progressStageText }}</strong>
@@ -90,7 +95,7 @@
 					</div>
 				</div>
 				<el-alert v-if="product === 'esa' && isUrlRanking && urlRankingMeta?.truncated" type="warning" :closable="false" show-icon class="traffic-ranking-notice" :title="pub.lang('日志数量较多，当前排行基于已处理的日志生成')" />
-				<el-alert v-else-if="product === 'esa' && isUrlRanking && urlRankingMeta?.errors.length" type="warning" :closable="false" show-icon class="traffic-ranking-notice" :title="`${urlRankingMeta.errors.length} ${pub.lang('个日志文件获取失败，已展示其余数据')}`" />
+				<el-alert v-else-if="product === 'esa' && isUrlRanking && urlRankingMeta?.errors?.length" type="warning" :closable="false" show-icon class="traffic-ranking-notice" :title="`${urlRankingMeta.errors.length} ${pub.lang('个日志文件获取失败，已展示其余数据')}`" />
 				<div v-if="product === 'esa' && isUrlRanking && urlRankingMeta?.update_time" class="traffic-ranking-meta">{{ urlRankingMeta.cached ? pub.lang('缓存数据') : pub.lang('日志数据') }} · {{ formatTime(urlRankingMeta.update_time) }} · {{ pub.lang('已处理') }} {{ urlRankingMeta.log_count }}/{{ urlRankingMeta.total_log_count }} {{ pub.lang('份日志') }}</div>
 				<div v-if="rankingRows.length" class="traffic-ranking">
 					<div v-for="(row, index) in rankingRows" :key="`${row.name}-${index}`" class="traffic-ranking__row" :class="{ clickable: rankingType === 'domains' }" @click="selectRanking(row)">
@@ -114,18 +119,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { CopyDocument, InfoFilled, Refresh } from '@element-plus/icons-vue'
 import { common, routes } from '@api/http'
 import { useMessage } from '@utils/hooks/message'
 import { copyText, pub } from '@utils/tools'
 
-interface AnalyticsPoint { timestamp: string; traffic?: number; bandwidth?: number; requests?: number; qps?: number; cache_hit_rate?: number; origin_traffic?: number }
+interface AnalyticsPoint { timestamp: string; traffic?: number | null; bandwidth?: number | null; requests?: number | null; qps?: number | null; cache_hit_rate?: number | null; origin_traffic?: number | null }
 interface RankingRow { name: string; value: number; requests?: number; traffic?: number; peak_bandwidth?: number }
 interface AnalyticsData {
 	product: 'cdn' | 'esa'
 	range: { key: string; start_time: string; end_time: string; interval: number }
-	summary: { traffic: number; requests: number; peak_bandwidth: number; peak_qps: number; cache_hit_rate: number | null; origin_traffic: number | null; origin_ratio: number | null; error_4xx_rate: number; error_5xx_rate: number; origin_5xx_rate: number }
+	summary: { [Key in 'traffic' | 'requests' | 'peak_bandwidth' | 'peak_qps' | 'cache_hit_rate' | 'origin_traffic' | 'origin_ratio' | 'error_4xx_rate' | 'error_5xx_rate' | 'origin_5xx_rate']: number | null }
 	trend: AnalyticsPoint[]
 	rankings: { domains: RankingRow[]; urls: RankingRow[]; url_traffic: RankingRow[]; regions: RankingRow[] }
 	url_domains?: string[]
@@ -138,11 +143,25 @@ interface AnalyticsData {
 interface EsaUrlRankingData { urls: RankingRow[]; url_traffic: RankingRow[]; host: string; log_count: number; total_log_count: number; row_count: number; truncated: boolean; update_time: number; cached: boolean; errors: Array<{ message: string; errorCode?: string }> }
 interface EsaUrlRankingProgress { stage: 'listing' | 'preparing' | 'processing' | 'ranking' | 'complete'; current: number; total: number; percentage: number; elapsed_ms: number; message?: string }
 
-const props = defineProps<{ product: 'cdn' | 'esa'; accountId: number; siteId?: string; domains?: string[] }>()
+interface EsaCapabilities { status: 'known' | 'unknown'; max_minutes: number | null; error?: string }
+const props = defineProps<{ product: 'cdn' | 'esa'; accountId: number; siteId?: string; siteName?: string; domains?: string[] }>()
 const Message = useMessage()
 const loading = ref(false)
 const urlRankingLoading = ref(false)
 const range = ref('today')
+const urlRange = ref('today')
+const analyticsError = ref('')
+const urlRankingError = ref('')
+const capabilities = ref<EsaCapabilities>()
+const capabilitiesLoading = ref(false)
+let analyticsRequestId = 0
+let capabilitiesRequestId = 0
+const rangeOptions = [{ key: 'today', label: pub.lang('今天') }, { key: 'yesterday', label: pub.lang('昨天') }, { key: '24h', label: pub.lang('近 24 小时') }, { key: '7d', label: pub.lang('7 天') }, { key: '30d', label: pub.lang('30 天') }]
+const quotaDays = computed(() => Number(((capabilities.value?.max_minutes || 0) / 1440).toFixed(2)))
+const rangeDurations: Record<string, number> = { yesterday: 1440, '24h': 1440, '7d': 10080, '30d': 43200 }
+const rangeMinutes = (key: string) => key === 'today' ? Math.ceil(((Date.now() + 8 * 3600000) % 86400000) / 60000) : (rangeDurations[key] || 0)
+const rangeDisabled = (key: string) => props.product === 'esa' && ((capabilitiesLoading.value && key === '30d') || (capabilities.value?.status === 'known' && rangeMinutes(key) > Number(capabilities.value.max_minutes)))
+const rangeHint = (key: string) => props.product !== 'esa' ? '' : capabilitiesLoading.value && key === '30d' ? pub.lang('正在读取监控查询额度') : rangeDisabled(key) ? pub.lang(`当前站点监控最多查询 ${quotaDays.value} 天`) : capabilities.value?.status === 'unknown' && key === '30d' ? pub.lang('额度未确认，可尝试查询') : ''
 const domainName = ref('')
 const activeMetric = ref('traffic')
 const rankingType = ref('domains')
@@ -169,7 +188,7 @@ const metricCards = computed(() => {
 const trendMetricMap: Record<string, keyof AnalyticsPoint> = { traffic: 'traffic', bandwidth: 'bandwidth', requests: 'requests', qps: 'qps', cache_hit_rate: 'cache_hit_rate', origin_traffic: 'origin_traffic' }
 const chartPoints = computed(() => {
 	const field = trendMetricMap[activeMetric.value]
-	return field ? (data.value?.trend || []).map(point => ({ timestamp: point.timestamp, value: Number(point[field] || 0) })) : []
+	return field ? (data.value?.trend || []).filter(point => point[field] !== null && point[field] !== undefined && Number.isFinite(Number(point[field]))).map(point => ({ timestamp: point.timestamp, value: Number(point[field]) })) : []
 })
 const chartMax = computed(() => Math.max(1, ...chartPoints.value.map(point => point.value)))
 const chartLine = computed(() => chartPoints.value.map((point, index, rows) => `${rows.length === 1 ? 450 : index / (rows.length - 1) * 900},${220 - point.value / chartMax.value * 205}`).join(' '))
@@ -188,7 +207,7 @@ const chartLabels = computed(() => {
 	return indexes.map(index => new Date(chartPoints.value[index].timestamp).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))
 })
 const activeMetricLabel = computed(() => metricCards.value.find(item => item.key === activeMetric.value)?.label || '')
-const chartPeakText = computed(() => `${pub.lang('峰值')} ${formatMetricValue(chartMax.value, activeMetric.value)}`)
+const chartPeakText = computed(() => chartPoints.value.length ? `${pub.lang('峰值')} ${formatMetricValue(Math.max(0, ...chartPoints.value.map(point => point.value)), activeMetric.value)}` : '--')
 const rangeText = computed(() => data.value ? `${new Date(data.value.range.start_time).toLocaleString()} — ${new Date(data.value.range.end_time).toLocaleString()}` : '')
 const intervalText = computed(() => data.value?.range.interval === 300 ? pub.lang('5 分钟粒度') : data.value?.range.interval === 3600 ? pub.lang('1 小时粒度') : pub.lang('1 天粒度'))
 const rankingRows = computed(() => props.product === 'esa' && isUrlRanking.value
@@ -200,7 +219,7 @@ const rankingDescription = computed(() => props.product === 'esa' && isUrlRankin
 	: pub.lang('快速定位主要用量来源'))
 const rankingMax = computed(() => Math.max(1, ...rankingRows.value.map(row => row.value)))
 const isUrlRanking = computed(() => rankingType.value === 'urls' || rankingType.value === 'url_traffic')
-const esaDomainOptions = computed(() => data.value?.url_domains || (data.value?.rankings.domains || []).map(item => item.name).filter(name => name && name !== '--'))
+const esaDomainOptions = computed(() => Array.from(new Set([props.siteName || '', ...(data.value?.url_domains || []), ...(data.value?.rankings.domains || []).map(item => item.name)].filter(name => name && name !== '--'))))
 const urlRankingMeta = computed(() => urlRankingData.value)
 const progressPercentage = computed(() => Math.min(100, Math.max(0, Math.round(Number(urlRankingProgress.value?.percentage || 0)))))
 const progressStageText = computed(() => ({
@@ -252,59 +271,89 @@ const selectRanking = (row: RankingRow) => {
 	loadAnalytics()
 }
 const loadEsaUrlRankings = async (force = false) => {
+	const requestId = ++urlRankingRequestId
+	urlRankingData.value = undefined
+	urlRankingProgress.value = undefined
+	urlRankingError.value = ''
 	if (props.product !== 'esa' || !props.siteId || !domainName.value) {
-		urlRankingRequestId += 1
-		urlRankingData.value = undefined
-		urlRankingProgress.value = undefined
 		urlRankingLoading.value = false
 		return
 	}
-	const requestId = ++urlRankingRequestId
 	const requestedDomain = domainName.value
+	const requestedSite = props.siteId
+	const requestedAccount = props.accountId
+	const requestedRange = urlRange.value
+	const isCurrent = () => requestId === urlRankingRequestId && requestedAccount === props.accountId && requestedSite === props.siteId && requestedDomain === domainName.value && requestedRange === urlRange.value
 	urlRankingLoading.value = true
-	urlRankingProgress.value = undefined
 	try {
 		const result = await common.sendAsync({
 			route: routes.aliyun.esa_url_rankings.path,
-			data: { account_id: props.accountId, site_id: props.siteId, domain_name: requestedDomain, range: range.value, force },
+			data: { account_id: requestedAccount, site_id: requestedSite, domain_name: requestedDomain, range: requestedRange, force },
 			timeout: 10 * 60 * 1000,
 			onProgress: progress => {
-				if (requestId === urlRankingRequestId && requestedDomain === domainName.value) urlRankingProgress.value = progress
+				if (isCurrent()) urlRankingProgress.value = progress
 			},
 		}) as any
-		if (requestId !== urlRankingRequestId || requestedDomain !== domainName.value) return
+		if (!isCurrent()) return
 		if (!result?.status) {
-			urlRankingData.value = undefined
-			return Message.request(result)
+			urlRankingError.value = result?.msg || pub.lang('URL 日志查询失败')
+			return
 		}
 		urlRankingData.value = result.data
+	} catch (error) {
+		if (isCurrent()) urlRankingError.value = error instanceof Error ? error.message : pub.lang('URL 日志查询失败')
 	} finally {
-		if (requestId === urlRankingRequestId) {
+		if (isCurrent()) {
 			urlRankingLoading.value = false
 			urlRankingProgress.value = undefined
 		}
 	}
 }
 const handleRankingTypeChange = () => {
-	if (props.product === 'esa' && isUrlRanking.value && domainName.value && !urlRankingLoading.value && urlRankingData.value?.host !== domainName.value) loadEsaUrlRankings()
+	if (props.product === 'esa' && isUrlRanking.value && domainName.value && !urlRankingLoading.value && !urlRankingData.value) loadEsaUrlRankings()
+}
+const loadCapabilities = async (force = false) => {
+	const requestId = ++capabilitiesRequestId
+	if (props.product !== 'esa' || !props.siteId) { capabilitiesLoading.value = false; return }
+	const siteId = props.siteId
+	capabilitiesLoading.value = true
+	try {
+		const result = await request(routes.aliyun.esa_analytics_capabilities.path, { account_id: props.accountId, site_id: siteId, force })
+		if (requestId !== capabilitiesRequestId || siteId !== props.siteId) return
+		capabilities.value = result?.status ? result.data : { status: 'unknown', max_minutes: null, error: result?.msg || pub.lang('额度读取失败') }
+	} catch (error) {
+		if (requestId === capabilitiesRequestId) capabilities.value = { status: 'unknown', max_minutes: null, error: error instanceof Error ? error.message : pub.lang('额度读取失败') }
+	} finally {
+		if (requestId === capabilitiesRequestId) {
+			capabilitiesLoading.value = false
+			if (rangeDisabled(range.value)) {
+				range.value = 'today'
+				Message.warn(pub.lang('监控额度已更新，时间范围已切换为今天'))
+				loadAnalytics()
+			}
+		}
+	}
 }
 const loadAnalytics = async (force = false) => {
+	const requestId = ++analyticsRequestId
+	data.value = undefined
+	analyticsError.value = ''
 	if (props.product === 'esa' && !props.siteId) return
+	const siteId = props.siteId
+	const requestedRange = range.value
 	loading.value = true
 	try {
 		const route = props.product === 'esa' ? routes.aliyun.esa_traffic_analytics.path : routes.aliyun.cdn_traffic_analytics.path
-		const result = await request(route, { account_id: props.accountId, site_id: props.siteId, domain_name: props.product === 'cdn' ? domainName.value : '', range: range.value, force })
-		if (!result?.status) return Message.request(result)
+		const result = await request(route, { account_id: props.accountId, site_id: siteId, domain_name: props.product === 'cdn' ? domainName.value : '', range: requestedRange, force })
+		if (requestId !== analyticsRequestId || siteId !== props.siteId || requestedRange !== range.value) return
+		if (!result?.status) { analyticsError.value = result?.msg || pub.lang('监控查询失败'); return }
 		data.value = result.data
-		if (props.product === 'esa') {
-			const options = esaDomainOptions.value
-			if (!options.includes(domainName.value)) domainName.value = ''
-			urlRankingData.value = undefined
-			if (isUrlRanking.value && domainName.value) await loadEsaUrlRankings(force)
-		}
 		if (!trendMetricMap[activeMetric.value]) activeMetric.value = 'traffic'
-	} finally { loading.value = false }
+	} catch (error) {
+		if (requestId === analyticsRequestId) analyticsError.value = error instanceof Error ? error.message : pub.lang('监控查询失败')
+	} finally { if (requestId === analyticsRequestId) loading.value = false }
 }
+const refreshAnalytics = () => Promise.all([loadCapabilities(true), loadAnalytics(true)])
 
 const formatBytes = (value?: number | null) => {
 	if (value === null || value === undefined || !Number.isFinite(Number(value))) return '--'
@@ -337,9 +386,23 @@ const formatDuration = (value?: number) => {
 	return rest ? `${minutes} ${pub.lang('分')} ${rest} ${pub.lang('秒')}` : `${minutes} ${pub.lang('分')}`
 }
 
-watch(() => props.siteId, () => { data.value = undefined; urlRankingData.value = undefined; urlRankingProgress.value = undefined; domainName.value = ''; rankingType.value = 'domains'; chartHoverIndex.value = null; loadAnalytics() })
-onMounted(() => loadAnalytics())
-defineExpose({ refresh: () => loadAnalytics(true) })
+watch(() => [props.product, props.accountId, props.siteId], () => {
+	urlRankingRequestId += 1
+	urlRankingLoading.value = false
+	urlRankingData.value = undefined
+	urlRankingProgress.value = undefined
+	urlRankingError.value = ''
+	capabilities.value = undefined
+	range.value = 'today'
+	urlRange.value = 'today'
+	domainName.value = ''
+	rankingType.value = 'domains'
+	chartHoverIndex.value = null
+	refreshAnalytics()
+})
+onMounted(() => Promise.all([loadCapabilities(), loadAnalytics()]))
+onBeforeUnmount(() => { analyticsRequestId += 1; capabilitiesRequestId += 1; urlRankingRequestId += 1 })
+defineExpose({ refresh: refreshAnalytics })
 </script>
 
 <style scoped lang="scss">
@@ -349,6 +412,9 @@ defineExpose({ refresh: () => loadAnalytics(true) })
 .traffic-toolbar__filters { min-width: 0; gap: 1rem; .el-select { width: 24rem; } }
 .traffic-toolbar__meta { gap: .55rem; color: var(--el-text-color-secondary); font-size: 1.05rem; white-space: nowrap; .el-icon { color: var(--el-text-color-placeholder); cursor: help; } }
 .traffic-partial { margin-bottom: 1rem; }
+.traffic-quota { display: flex; align-items: center; gap: .6rem; margin-bottom: 1rem; color: var(--el-text-color-secondary); font-size: 1.05rem; }
+.traffic-log-hint { margin: .5rem 0; color: var(--el-text-color-secondary); font-size: 1rem; }
+.traffic-log-range { max-width: 12rem; }
 .traffic-alerts { display: grid; margin-bottom: 1rem; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; }
 .traffic-metrics { display: grid; margin-bottom: 1.2rem; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: .8rem; }
 .traffic-metric { min-width: 0; padding: 1.15rem 1.2rem; border: 1px solid var(--el-border-color-lighter); border-radius: .75rem; color: var(--el-text-color-primary); text-align: left; background: var(--el-bg-color); cursor: pointer; transition: border-color .18s, background .18s, transform .18s; span, strong, small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } span { color: var(--el-text-color-secondary); font-size: 1.05rem; } strong { margin-top: .45rem; font-size: 1.55rem; font-weight: 650; } small { margin-top: .35rem; color: var(--el-text-color-placeholder); font-size: .95rem; } &:hover { border-color: var(--el-color-primary-light-5); transform: translateY(-1px); } &.active { border-color: rgba(255, 106, 0, .35); background: rgba(255, 106, 0, .055); } &.warning strong { color: var(--el-color-danger); } }
