@@ -167,6 +167,7 @@ class IndexController extends Controller {
         pub.M('aliyun_account').decryptAll();
         pub.M('aliyun_ssh_credential').decryptAll();
         pub.M('tencent_ssh_credential').decryptAll();
+        pub.M('tencent_account').decryptAll();
         pub.M('cloudflare_account').decryptAll();
         pub.M('ssl_channel').decryptAll();
 
@@ -186,6 +187,7 @@ class IndexController extends Controller {
         pub.M('aliyun_account').encryptAll();
         pub.M('aliyun_ssh_credential').encryptAll();
         pub.M('tencent_ssh_credential').encryptAll();
+        pub.M('tencent_account').encryptAll();
         pub.M('cloudflare_account').encryptAll();
         pub.M('ssl_channel').encryptAll();
         

@@ -21,7 +21,7 @@ class Sqlite {
         this.JOIN = ''
         this.UNION = ''
         this.DISTINCT = ''
-        this.ENCRYPT_FIELDS = ['username','password','key_password','proxy_username','proxy_password','private_key','api_token','admin_path','server_id','access_key_id','access_key_secret','secret_key']
+        this.ENCRYPT_FIELDS = ['username','password','key_password','proxy_username','proxy_password','private_key','api_token','admin_path','server_id','access_key_id','access_key_secret','secret_id','secret_key']
         this.NOT_CLONE = false
 
 
@@ -340,6 +340,34 @@ class Sqlite {
         if (this.DB_OBJ.prepare(sql).run()){
             console.log('创建[aliyun_account]表成功')
         }
+
+        sql = `CREATE TABLE IF NOT EXISTS tencent_account (
+            \`account_id\` INTEGER PRIMARY KEY AUTOINCREMENT,
+            \`group_id\` INTEGER DEFAULT 0,
+            \`remark\` TEXT DEFAULT "",
+            \`site\` TEXT DEFAULT "cn",
+            \`secret_id\` TEXT DEFAULT "",
+            \`secret_key\` TEXT DEFAULT "",
+            \`balance\` TEXT DEFAULT "",
+            \`balance_currency\` TEXT DEFAULT "CNY",
+            \`balance_refresh_time\` INTEGER DEFAULT 0,
+            \`balance_error\` TEXT DEFAULT "",
+            \`server_count\` INTEGER DEFAULT -1,
+            \`cvm_count\` INTEGER DEFAULT -1,
+            \`lighthouse_count\` INTEGER DEFAULT -1,
+            \`server_refresh_time\` INTEGER DEFAULT 0,
+            \`server_error\` TEXT DEFAULT "",
+            \`sort\` INTEGER DEFAULT 0,
+            \`addtime\` INTEGER DEFAULT 0,
+            \`update_time\` INTEGER DEFAULT 0
+        )`
+        if (this.DB_OBJ.prepare(sql).run()) console.log('创建[tencent_account]表成功')
+
+        sql = `CREATE TABLE IF NOT EXISTS tencent_group (
+            \`group_id\` INTEGER PRIMARY KEY AUTOINCREMENT,
+            \`group_name\` TEXT DEFAULT ""
+        )`
+        if (this.DB_OBJ.prepare(sql).run()) console.log('创建[tencent_group]表成功')
 
         sql = `CREATE TABLE IF NOT EXISTS cloudflare_account (
             \`account_id\` INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -13,6 +13,7 @@ const os = require("os")
 const { aliyunService, normalizeError } = require('../service/aliyun.js');
 const { AliyunCliSession } = require('../service/aliyun-cli.js');
 const { serverSshService } = require('../service/server-ssh');
+const { tencentSshService } = require('../service/tencent-ssh');
 
 const TermItems = {};
 global.active_ssh_id = 0;
@@ -963,7 +964,7 @@ class TermController extends Controller {
 		if (args.data?.transport === 'cloud-ssh') {
 			try {
 				if (TermItems[channel]) TermItems[channel].disconnect();
-				const service = serverSshService;
+				const service = args.data.cloud_provider === 'tencent' ? tencentSshService : serverSshService;
 				TermItems[channel] = service.consume(event.sender.id, args.data.ticket, channel, event.sender);
 			} catch (error) { return pub.send_error_msg(event, channel, error.message); }
 			return;

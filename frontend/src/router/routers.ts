@@ -32,6 +32,8 @@ export const routeList: Array<RouteRecordRaw> = [
 				path: '/aliyun/:accountId/oss/:bucket',
 				component: () => import('@views/aliyun/oss-objects.vue'),
 			},
+			{ path: '/tencent', component: () => import('@views/tencent/index.vue') },
+			{ path: '/tencent/:accountId', component: () => import('@views/tencent/detail.vue') },
 			{ path: '/cloudflare', component: () => import('@views/cloudflare/index.vue') },
 			{ path: '/cloudflare/:accountId', component: () => import('@views/cloudflare/detail.vue') },
 			{ path: '/cloudflare/:accountId/zone/:zoneId', component: () => import('@views/cloudflare/zone-detail.vue') },

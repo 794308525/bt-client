@@ -28,6 +28,13 @@
 					<span class="title">{{ pub.lang('阿里云') }}</span>
 				</div>
 			</li>
+			<li :class="{ active: $route.path.startsWith('/tencent') }" @click="goTo('/tencent')">
+				<div class="bg-color"></div>
+				<div class="flex bg-text">
+					<bt-icon name="tencent" size="16" class="z-1" />
+					<span class="title">{{ pub.lang('腾讯云') }}</span>
+				</div>
+			</li>
 			<li :class="{ active: $route.path.startsWith('/cloudflare') }" @click="goTo('/cloudflare')">
 				<div class="bg-color"></div>
 				<div class="flex bg-text">
@@ -61,18 +68,24 @@ import { pub } from '@utils/tools'
 const route = useRoute()
 const router = useRouter()
 const lastAliyunPath = ref('/aliyun')
+const lastTencentPath = ref('/tencent')
 const lastCloudflarePath = ref('/cloudflare')
 
 watch(
 	() => route.fullPath,
 	path => {
 		if (route.path.startsWith('/aliyun')) lastAliyunPath.value = path
+		if (route.path.startsWith('/tencent')) lastTencentPath.value = path
 		if (route.path.startsWith('/cloudflare')) lastCloudflarePath.value = path
 	},
 	{ immediate: true }
 )
 
 const goTo = (path: string) => {
+	if (path === '/tencent' && !route.path.startsWith('/tencent')) {
+		router.push(lastTencentPath.value)
+		return
+	}
 	if (path === '/aliyun' && !route.path.startsWith('/aliyun')) {
 		router.push(lastAliyunPath.value)
 		return
