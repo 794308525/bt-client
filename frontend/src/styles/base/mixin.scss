@@ -23,13 +23,14 @@
 }
 
 // login 背景
-@mixin logo-green() {
+@mixin app-logo() {
 	content: '';
 	display: block;
-	width: 1.4rem;
+	width: 2rem;
 	height: 2rem;
+	border-radius: 22%;
 	opacity: 0.8;
-	background-image: url('/src/assets/images/logo-green.svg');
+	background-image: url('/src/assets/images/logo.png');
 	background-size: contain;
 	background-position: center center;
 	background-repeat: no-repeat;

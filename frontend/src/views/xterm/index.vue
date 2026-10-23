@@ -53,7 +53,7 @@
 					<div
 						class="welcome flex flex-col items-center justify-center"
 						:style="{ height: '600px' }">
-						<el-image :src="White" class="w-[20rem] h-[20rem]" style="opacity: 0.1" />
+						<el-image :src="AppLogo" class="w-[20rem] h-[20rem] rounded-[22%] overflow-hidden" :alt="pub.lang('寰宇运维')" style="opacity: 0.1" />
 						<span class="text-[1.6rem] my-4">{{ pub.lang('双击服务器打开终端') }}</span>
 						<el-button type="primary" size="large" @click="openSelectDialog({ isQuick: false })">{{
 							pub.lang('添加服务器')
@@ -84,7 +84,7 @@ import addHostDialog from './components/AddHost/index.vue'
 import MyTerminal from './Views/Terminal/index.vue'
 import { ipc, common, routes } from '@api/http'
 import { createContext } from './hooks'
-import White from '@/assets/images/logo-white.svg'
+import AppLogo from '@/assets/images/logo.png'
 import { delete_connect } from '@views/xterm/controller'
 
 import { pub } from '@utils/tools'

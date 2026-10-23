@@ -178,10 +178,10 @@ $tabs-bg-color: #f5f7fa;
 			&::before {
 				position: absolute;
 				top: 50%;
-				left: 56%;
+				left: 50%;
 				opacity: 0.8;
 				transform: translate(-50%, -50%);
-				@include logo-green;
+				@include app-logo;
 			}
 		}
 		.el-loading-text {
@@ -216,14 +216,14 @@ $tabs-bg-color: #f5f7fa;
 			content: '';
 			display: block;
 			position: absolute;
-			left: 54%;
-			top: 53%;
-			margin-top: -1rem;
-			margin-left: -2rem;
-			width: 4rem;
+			left: 50%;
+			top: 50%;
+			transform: translate(-50%, -50%);
+			width: 2rem;
 			height: 2rem;
+			border-radius: 22%;
 			opacity: 0.8;
-			background-image: url('/src/assets/images/logo-green.svg');
+			background-image: url('/src/assets/images/logo.png');
 			background-size: contain;
 			background-position: center center;
 			background-repeat: no-repeat;

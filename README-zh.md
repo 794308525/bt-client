@@ -1,8 +1,8 @@
-# 堡塔多机管理 (bt-client)
+# 寰宇运维
 
 [English](README.md) | 中文说明
 
-堡塔多机管理是一款专业的多机管理工具，专为统一管理多台SSH连接和宝塔面板而设计。通过简洁直观的界面，用户可以轻松管理多台服务器，提高运维效率。
+寰宇运维是基于[堡塔多机管理（bt-client）](https://github.com/aaPanel/bt-client)二次开发的非官方维护版本，用于集中管理宝塔面板、SSH 连接、阿里云和腾讯云资源，并提供常用运维工具。[本版本源码](https://github.com/794308525/bt-client)。
 
 ## ✨ 主要特性
 
@@ -128,6 +128,6 @@ bt-client/
 
 ## 🔗 相关链接
 
-- [宝塔官网](https://www.bt.cn)
+- [宝塔官网](https://www.bt.cn/u/XbfWPO)
 - [产品页面](https://www.bt.cn/new/product_pc.html)
 - [使用文档](https://www.bt.cn/bbs)

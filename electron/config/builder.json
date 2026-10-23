@@ -1,5 +1,5 @@
 {
-  "productName": "bt-client",
+  "productName": "寰宇运维",
   "appId": "com.bt.bt-client",
   "copyright": "Guangdong Baota Safety Technology Co., Ltd.",
   "directories": {
@@ -28,7 +28,7 @@
     "installerHeaderIcon": "build/icons/icon.ico",
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
-    "shortcutName": "堡塔多机管理"
+    "shortcutName": "寰宇运维"
   },
   "publish": [
     {

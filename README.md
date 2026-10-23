@@ -1,8 +1,8 @@
-# bt-client
+# 寰宇运维
 
 [中文说明](README-zh.md) | English
 
-A professional multi-machine management tool designed for unified management of multiple SSH connections and BT-Panel (Baota Panel). With an intuitive interface, users can easily manage multiple servers and improve operational efficiency.
+寰宇运维 is an unofficial derivative of [bt-client](https://github.com/aaPanel/bt-client). It combines Baota panel management, SSH connections, Alibaba Cloud and Tencent Cloud resource management, and common operations tools. [Source code for this version](https://github.com/794308525/bt-client).
 
 ## ✨ Key Features
 
@@ -128,6 +128,6 @@ This project is licensed under the AGPL 3.0 License. See the [LICENSE](LICENSE) 
 
 ## 🔗 Related Links
 
-- [BT-Panel Official Website](https://www.bt.cn)
+- [BT-Panel Official Website](https://www.bt.cn/u/XbfWPO)
 - [Product Page](https://www.bt.cn/new/product_pc.html)
 - [Documentation](https://www.bt.cn/bbs)

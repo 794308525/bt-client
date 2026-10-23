@@ -23,7 +23,7 @@ module.exports = appInfo => {
 	 * 主窗口
 	 */
 	config.windowsOption = {
-		title: '堡塔',
+		title: '寰宇运维',
 		width: 1662,
 		height: 900,
 		minWidth: 900,
@@ -161,7 +161,7 @@ module.exports = appInfo => {
 		},
 		tray: {
 			enable: true,
-			title: '堡塔多机管理',
+			title: '寰宇运维',
 			icon: '/public/images/tray.png',
 		},
 		security: {

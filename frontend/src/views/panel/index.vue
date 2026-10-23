@@ -4,15 +4,15 @@
 			<div class="panel__header flex justify-between items-center mb-[2.4rem]">
 				<div class="panel-primary-actions flex items-center flex-shrink-0">
 					<div class="panel-brand flex items-center">
-						<img :src="LogoGreen" class="panel-brand__logo" :alt="pub.lang('堡塔')" />
+						<img :src="AppLogo" class="panel-brand__logo" :alt="pub.lang('寰宇运维')" />
 						<div class="panel-brand__content">
-							<div class="panel-brand__name">{{ pub.lang('堡塔多机管理') }}</div>
+							<div class="panel-brand__name">{{ pub.lang('寰宇运维') }}</div>
 							<a
 								class="panel-brand__site"
-								href="https://www.bt.cn"
+								href="https://www.bt.cn/u/XbfWPO"
 								target="_blank"
 								rel="noopener noreferrer">
-								{{ pub.lang('官方网站') }}
+								{{ pub.lang('宝塔官网') }}
 								<el-icon><TopRight /></el-icon>
 							</a>
 						</div>
@@ -344,7 +344,7 @@
 		</template>
 		<template v-else>
 			<div class="welcome flex flex-col items-center justify-center" :style="{ height: '600px' }">
-				<el-image :src="White" class="w-[20rem] h-[20rem]" />
+				<el-image :src="AppLogo" class="w-[20rem] h-[20rem] rounded-[22%] overflow-hidden" :alt="pub.lang('寰宇运维')" />
 				<span class="text-[1.6rem] my-4">{{ pub.lang('欢迎来到面板管理系统') }}</span>
 				<div>
 					<el-button type="primary" @click="addPanel">{{ pub.lang('点击添加面板') }}</el-button>
@@ -381,8 +381,7 @@ import groupManageDialog from './components/GroupManage/index.vue'
 import installLog from './components/AddPanel/installLog.vue'
 import installResults from './components/AddPanel/installResults.vue'
 import AddGroup from '@views/panel/components/AddGroup/index.vue'
-import White from '@/assets/images/logo-white.svg'
-import LogoGreen from '@/assets/images/logo-green.svg'
+import AppLogo from '@/assets/images/logo.png'
 import { pub, getByteUnit, copyText } from '@utils/tools'
 import { record_disk, set_panel_sort, type Panel_Params } from './controller'
 import { checkIp } from '@utils/is'
@@ -1224,8 +1223,9 @@ onUnmounted(() => {
 	}
 
 	.panel-brand__logo {
-		width: 2.8rem;
+		width: 3rem;
 		height: 3rem;
+		border-radius: 22%;
 		margin-right: 0.9rem;
 		object-fit: contain;
 	}
