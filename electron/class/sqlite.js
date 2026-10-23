@@ -66,6 +66,9 @@ class Sqlite {
             this.checkField('aliyun_account', 'resource_error', 'TEXT', '""')
             this.checkField('aliyun_account', 'resource_error_detail', 'TEXT', '""')
             this.checkField('aliyun_account', 'resource_status', 'TEXT', '"{}"')
+            this.checkField('cloudflare_account', 'sort', 'INTEGER', '0')
+            this.checkField('cloudflare_account', 'zone_count', 'INTEGER', '-1')
+            this.checkField('cloudflare_account', 'cloudflare_account_id', 'TEXT', '""')
             IS_CHECK_TABLE.status = true
         }
         
@@ -336,6 +339,20 @@ class Sqlite {
 
         if (this.DB_OBJ.prepare(sql).run()){
             console.log('创建[aliyun_account]表成功')
+        }
+
+        sql = `CREATE TABLE IF NOT EXISTS cloudflare_account (
+            \`account_id\` INTEGER PRIMARY KEY AUTOINCREMENT,
+            \`cloudflare_account_id\` TEXT DEFAULT "",
+            \`remark\` TEXT DEFAULT "",
+            \`api_token\` TEXT DEFAULT "",
+            \`sort\` INTEGER DEFAULT 0,
+            \`zone_count\` INTEGER DEFAULT -1,
+            \`addtime\` INTEGER DEFAULT 0,
+            \`update_time\` INTEGER DEFAULT 0
+        )`
+        if (this.DB_OBJ.prepare(sql).run()){
+            console.log('创建[cloudflare_account]表成功')
         }
 
         sql = `CREATE TABLE IF NOT EXISTS aliyun_group (

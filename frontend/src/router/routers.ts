@@ -32,6 +32,9 @@ export const routeList: Array<RouteRecordRaw> = [
 				path: '/aliyun/:accountId/oss/:bucket',
 				component: () => import('@views/aliyun/oss-objects.vue'),
 			},
+			{ path: '/cloudflare', component: () => import('@views/cloudflare/index.vue') },
+			{ path: '/cloudflare/:accountId', component: () => import('@views/cloudflare/detail.vue') },
+			{ path: '/cloudflare/:accountId/zone/:zoneId', component: () => import('@views/cloudflare/zone-detail.vue') },
 			{
 				path: '/toolbox',
 				component: () => import('@views/toolbox/index.vue'),

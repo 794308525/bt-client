@@ -28,6 +28,13 @@
 					<span class="title">{{ pub.lang('阿里云') }}</span>
 				</div>
 			</li>
+			<li :class="{ active: $route.path.startsWith('/cloudflare') }" @click="goTo('/cloudflare')">
+				<div class="bg-color"></div>
+				<div class="flex bg-text">
+					<bt-icon name="cloudflare" size="16" class="z-1" />
+					<span class="title">{{ pub.lang('Cloudflare') }}</span>
+				</div>
+			</li>
 			<li :class="{ active: $route.path.startsWith('/toolbox') }" @click="goTo('/toolbox')">
 				<div class="bg-color"></div>
 				<div class="flex bg-text">
@@ -54,11 +61,13 @@ import { pub } from '@utils/tools'
 const route = useRoute()
 const router = useRouter()
 const lastAliyunPath = ref('/aliyun')
+const lastCloudflarePath = ref('/cloudflare')
 
 watch(
 	() => route.fullPath,
 	path => {
 		if (route.path.startsWith('/aliyun')) lastAliyunPath.value = path
+		if (route.path.startsWith('/cloudflare')) lastCloudflarePath.value = path
 	},
 	{ immediate: true }
 )
@@ -66,6 +75,10 @@ watch(
 const goTo = (path: string) => {
 	if (path === '/aliyun' && !route.path.startsWith('/aliyun')) {
 		router.push(lastAliyunPath.value)
+		return
+	}
+	if (path === '/cloudflare' && !route.path.startsWith('/cloudflare')) {
+		router.push(lastCloudflarePath.value)
 		return
 	}
 	router.push(path)
