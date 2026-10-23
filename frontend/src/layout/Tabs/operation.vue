@@ -89,19 +89,24 @@ const setCloseConfig = () => {
 <style scoped lang="scss">
 .window-controls {
 	display: flex;
+	flex-shrink: 0;
 	justify-content: flex-end;
 	align-items: center;
-	height: 4.1rem;
+	height: var(--titlebar-height);
 }
 
 .control {
-	width: 4.6rem;
-	height: 4.1rem;
+	flex-shrink: 0;
+	width: var(--titlebar-control-width);
+	height: var(--titlebar-height);
 	display: flex;
 	align-items: center;
 	justify-content: center;
 	cursor: pointer;
 	border: none;
+	padding: 0;
+	line-height: 0;
+	-webkit-app-region: no-drag;
 	background: none;
 }
 

@@ -17,6 +17,8 @@ import operation from './operation.vue'
 
 <style scoped lang="scss">
 .layout-header {
+	--titlebar-control-width: 4.6rem;
+	--titlebar-height: 4.1rem;
 	position: relative;
 	background-color: #d3e3fd;
 }

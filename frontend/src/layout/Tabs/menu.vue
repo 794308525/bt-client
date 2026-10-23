@@ -1,12 +1,6 @@
 <template>
 	<div class="flex items-center">
 		<ul class="flex m-0">
-			<li :class="{ active: $route.path === '/setting' }" @click="goTo('/setting')">
-				<div class="bg-color"></div>
-				<div class="flex bg-text">
-					<bt-icon name="user" color="1f1f1f" size="16" class="z-1" />
-				</div>
-			</li>
 			<li :class="{ active: $route.path === '/home' }" @click="goTo('/home')">
 				<div class="bg-color"></div>
 				<div class="flex bg-text">
@@ -35,7 +29,8 @@
 					<span class="title">{{ pub.lang('腾讯云') }}</span>
 				</div>
 			</li>
-			<li :class="{ active: $route.path.startsWith('/cloudflare') }" @click="goTo('/cloudflare')">
+			<!-- 暂时隐藏 Cloudflare 入口，保留功能代码与已有数据。 -->
+			<li v-if="false" :class="{ active: $route.path.startsWith('/cloudflare') }" @click="goTo('/cloudflare')">
 				<div class="bg-color"></div>
 				<div class="flex bg-text">
 					<bt-icon name="cloudflare" size="16" class="z-1" />
@@ -132,11 +127,6 @@ ul {
 				top: 0;
 				left: 0;
 			}
-			&:first-child {
-				.bg-color {
-					width: 3.6rem;
-				}
-			}
 		}
 		&.active {
 			.bg-color {
@@ -163,13 +153,6 @@ ul {
 				&::after {
 					right: -19px;
 					clip-path: inset(50% 50% 0 -10px);
-				}
-			}
-		}
-		&:first-child {
-			&.active {
-				.bg-color {
-					width: 3.6rem;
 				}
 			}
 		}

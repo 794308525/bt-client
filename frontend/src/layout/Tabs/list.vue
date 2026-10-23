@@ -1,6 +1,6 @@
 <template>
-	<div class="w-full flex flex-1">
-		<div class="tabs-container flex-1" @click="handleClick">
+	<div class="flex flex-1 min-w-0">
+		<div class="tabs-container flex-1 min-w-0" @click="handleClick">
 			<div class="flex">
 				<tabsMenu
 					ref="tabChrome"
@@ -14,59 +14,38 @@
 			</div>
 		</div>
 		
+		<el-tooltip :content="pub.lang('设置')" placement="bottom">
+			<button
+				type="button"
+				class="titlebar-action settings-button"
+				:class="{ active: route.path === '/setting' }"
+				:aria-label="pub.lang('设置')"
+				:aria-current="route.path === '/setting' ? 'page' : undefined"
+				@click="router.push('/setting')">
+				<el-icon :size="16"><Setting /></el-icon>
+			</button>
+		</el-tooltip>
 		<!-- 下载进度 -->
-		<div v-show="noXtermRouter" class="flex items-center w-[3rem]">
-			<template v-if="status === 'download'">
+		<el-tooltip :content="endTips || pub.lang('下载列表')" placement="bottom">
+			<button
+				v-show="noXtermRouter"
+				type="button"
+				class="titlebar-action download-button"
+				:aria-label="pub.lang('下载列表')"
+				@click="openDownLoadView">
 				<el-progress
-					@click="openDownLoadView"
+					v-if="status === 'download'"
 					type="circle"
 					:percentage="downloadFile.percent"
 					status="success"
 					color="#409eff"
 					:stroke-width="2"
-					:width="20">
-					<svg
-						t="1724315093957"
-						class="icon"
-						viewBox="0 0 1024 1024"
-						version="1.1"
-						xmlns="http://www.w3.org/2000/svg"
-						p-id="48179"
-						width="12"
-						height="12">
-						<path
-							d="M846.7456 421.96992L591.872 676.757504V73.728h-159.744v603.041792L177.225728 421.96992l-113.195008 113.164288 391.430144 391.389184c15.607808 15.663104 36.114432 23.492608 56.573952 23.492608 20.45952 0 40.972288-7.831552 56.633344-23.492608l391.288832-391.389184-113.211392-113.164288z"
-							p-id="48180"
-							fill="#409eff"></path>
-					</svg>
+					:width="22">
+					<el-icon :size="12"><Download /></el-icon>
 				</el-progress>
-			</template>
-			<template v-else>
-				<el-tooltip
-					class="item"
-					effect="dark"
-					:content="endTips"
-					placement="left"
-					:visible.sync="downloadTooltip">
-					<div class="download-end" @click="openDownLoadView">
-						<svg
-							t="1724315212639"
-							class="icon"
-							viewBox="0 0 1024 1024"
-							version="1.1"
-							xmlns="http://www.w3.org/2000/svg"
-							p-id="49349"
-							width="16"
-							height="16">
-							<path
-								d="M938.855808 638.776382l0 270.299169c0 27.41028-22.210861 49.634444-49.621141 49.634444l-754.442728 0c-27.41028 0-49.647747-22.224164-49.647747-49.634444L85.144192 638.776382c0-27.41028 22.224164-49.634444 49.634444-49.634444s49.634444 22.224164 49.634444 49.634444l0 220.664725 655.17384 0L839.58692 638.776382c0-27.41028 22.224164-49.634444 49.634444-49.634444S938.855808 611.366102 938.855808 638.776382zM476.55165 701.027168c9.335622 9.534144 22.116717 14.905478 35.46063 14.905478 13.344936 0 26.121937-5.371334 35.461653-14.905478l198.014866-202.167442c19.179828-19.583011 18.85544-51.006697-0.732687-70.190619-19.587104-19.175735-51.016931-18.85544-70.196759 0.731664l-112.924909 115.285676L561.634444 114.924449c0-27.41028-22.224164-49.634444-49.634444-49.634444-27.41028 0-49.634444 22.224164-49.634444 49.634444l0 429.754834L349.473393 429.40077c-19.179828-19.583011-50.590212-19.902282-70.186526-0.731664-19.583011 19.179828-19.910469 50.603515-0.730641 70.190619L476.55165 701.027168z"
-								p-id="49350"
-								fill="#555555"></path>
-						</svg>
-					</div>
-				</el-tooltip>
-			</template>
-		</div>
+				<el-icon v-else :size="16"><Download /></el-icon>
+			</button>
+		</el-tooltip>
 	</div>
 </template>
 
@@ -76,6 +55,8 @@ import { storeToRefs } from 'pinia'
 import { useSettingStore } from '@store/setting'
 import { useRoute, useRouter } from 'vue-router'
 import { common, routes, ipc } from '@api/http'
+import { Download, Setting } from '@element-plus/icons-vue'
+import { pub } from '@utils/tools'
 
 const route = useRoute()
 const router = useRouter()
@@ -87,7 +68,6 @@ const tabChrome = ref()
 const status = ref('')
 const noXtermRouter = ref(true)
 const downloadFile = ref<{ percent?: number }>({})
-const downloadTooltip = ref(false)
 const endTips = ref('')
 const showLoginPopover = ref(false)
 
@@ -117,9 +97,6 @@ const downloadListener = () => {
 const downloadEnd = () => {
 	status.value = 'end' // 下载完成
 	downloadFile.value = {}
-	setTimeout(() => {
-		downloadTooltip.value = false
-	}, 3000)
 }
 // 打开下载列表
 const openDownLoadView = () => {
@@ -253,27 +230,34 @@ onUnmounted(() => {
 </script>
 
 <style lang="sass" scoped>
+.titlebar-action
+	display: flex
+	align-items: center
+	justify-content: center
+	align-self: center
+	flex-shrink: 0
+	width: var(--titlebar-control-width)
+	height: var(--titlebar-height)
+	margin: 0
+	padding: 0
+	border: none
+	border-radius: 0
+	background: transparent
+	color: #000
+	line-height: 0
+	cursor: pointer
+	-webkit-app-region: no-drag
+	&:hover, &.active
+		background-color: #a8c7fa
+	&.active
+		color: #409eff
+	&:focus-visible
+		outline: 2px solid #409eff
+		outline-offset: -2px
 :deep(.el-progress)
 	.el-progress__text
 		display: flex
-		left: 4px
-.download-end
-	position: relative
-	cursor: pointer
-	z-index:1
-	&:hover::before
-		content: ''
-		background-color: #a8c7fa
-		position: absolute
-		width: 3rem
-		height: 3rem
-		display: inline-block
-		left: -7px
-		top: -6px
-		border-radius: 20px
-		z-index:-1
-.dark
-	.download-end
-		&:hover::before
-			background-color: #1f1f1f
+		align-items: center
+		justify-content: center
+		left: 0
 </style>
