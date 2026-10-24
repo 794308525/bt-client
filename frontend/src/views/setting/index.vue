@@ -381,7 +381,9 @@ onMounted(async () => {
 
 <style scoped lang="scss">
 .setting-style {
+	width: 100%;
 	max-width: 112rem;
+	margin: 0 auto;
 	padding: 2.4rem 3.6rem 3.6rem;
 	color: var(--el-text-color-primary);
 }

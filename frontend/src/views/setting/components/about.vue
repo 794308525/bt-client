@@ -140,7 +140,7 @@ const licenseVisible = ref(false)
 
 <style scoped lang="scss">
 .about-page {
-	width: min(96rem, 100%);
+	width: 100%;
 	color: var(--el-text-color-primary);
 	line-height: 1.7;
 }

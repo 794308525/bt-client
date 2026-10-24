@@ -28,7 +28,7 @@ defineProps<{ version: string }>()
 
 <style scoped lang="scss">
 .changelog-page {
-	width: min(96rem, 100%);
+	width: 100%;
 	color: var(--el-text-color-primary);
 	user-select: text;
 }
