@@ -1,6 +1,6 @@
 {
   "name": "bt-client",
-  "version": "1.2.14",
+  "version": "1.2.16",
   "description": "寰宇运维：基于堡塔多机管理的非官方二次开发版",
   "main": "main.js",
   "productName": "寰宇运维",
