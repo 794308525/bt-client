@@ -108,16 +108,6 @@
 						</div>
 					</div>
 				</template>
-				<div class="account-credentials">
-					<CloudCredential
-						label="SecretId"
-						:value="account.secret_id"
-						:reset-key="credentialReset" />
-					<CloudCredential
-						label="SecretKey"
-						:load-value="() => readSecret(account.account_id)"
-						:reset-key="credentialReset" />
-				</div>
 				<div class="balance">
 					<strong>{{ money(account) }}</strong>
 					<span class="balance-meta">
@@ -144,10 +134,6 @@
 					</span>
 				</div>
 				<div class="resource-counts">
-					<div>
-						<span>{{ pub.lang('服务器') }}</span>
-						<strong>{{ count(account.server_count) }}</strong>
-					</div>
 					<div>
 						<span>CVM</span>
 						<strong>{{ count(account.cvm_count) }}</strong>
@@ -326,7 +312,6 @@ import { Delete, EditPen, Plus, Refresh, Search, Setting } from '@element-plus/i
 import { ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { pub } from '@utils/tools'
 import { useMessage } from '@utils/hooks/message'
-import CloudCredential from '@/components/CloudCredential/index.vue'
 import { request, money, count, timeText, type TencentAccount, type TencentGroup } from './api'
 
 const router = useRouter()
@@ -369,7 +354,6 @@ const dialogVisible = ref(false)
 const saving = ref(false)
 const editingId = ref(0)
 const credentialsLoading = ref(false)
-const credentialReset = ref(0)
 let credentialRequestId = 0
 const formRef = ref<FormInstance>()
 const form = reactive({ remark: '', site: 'cn', secret_id: '', secret_key: '', group_id: 0 })
@@ -404,7 +388,6 @@ async function load() {
 	const result = await request<{ data: TencentAccount[]; groups: TencentGroup[] }>('list')
 	if (disposed) return
 	accounts.value = result.data
-	credentialReset.value++
 	groups.value = result.groups
 	if (!groups.value.some(group => group.group_id === groupId.value)) groupId.value = -1
 }
@@ -447,10 +430,8 @@ async function refreshAll(force = false) {
 }
 const readCredentials = (accountId: number) =>
 	request<{ secret_id: string; secret_key: string }>('credentials', { account_id: accountId })
-const readSecret = async (accountId: number) => (await readCredentials(accountId)).secret_key
 function clearCredentialValues() {
 	credentialRequestId++
-	credentialReset.value++
 	credentialsLoading.value = false
 	form.secret_key = ''
 }
@@ -814,9 +795,6 @@ onBeforeUnmount(() => {
 		white-space: nowrap;
 	}
 }
-.account-credentials {
-	padding: 0.2rem 0 0.6rem;
-}
 .balance {
 	display: flex;
 	min-width: 0;
@@ -868,8 +846,8 @@ onBeforeUnmount(() => {
 }
 .resource-counts {
 	display: grid;
-	grid-template-columns: repeat(2, minmax(0, 1fr));
-	gap: 1rem 2.4rem;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 1rem 1.6rem;
 	align-items: center;
 	padding: 1.1rem 0;
 	border-top: 1px solid var(--el-border-color-lighter);
@@ -877,9 +855,8 @@ onBeforeUnmount(() => {
 	> div {
 		display: grid;
 		min-width: 0;
-		grid-template-columns: 4.2rem minmax(0, 1fr);
 		align-items: center;
-		column-gap: 0.8rem;
+		row-gap: 0.4rem;
 	}
 	span {
 		color: var(--el-text-color-secondary);
@@ -889,6 +866,7 @@ onBeforeUnmount(() => {
 		font-size: 1.65rem;
 		font-weight: 650;
 		font-variant-numeric: tabular-nums;
+		line-height: 2.4rem;
 	}
 	.site-value {
 		font-size: 1.25rem;

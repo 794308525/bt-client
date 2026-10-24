@@ -105,11 +105,6 @@
 						</el-dropdown>
 					</div>
 				</template>
-				<div class="aliyun-card__credentials">
-					<CloudCredential label="AccessKey ID" :value="account.access_key_id" :reset-key="credentialReset" />
-					<CloudCredential label="AccessKey Secret" :load-value="() => readSecret(account.account_id)" :reset-key="credentialReset" />
-				</div>
-
 				<div class="aliyun-balance">
 					<strong>{{ formatBalance(account.balance) }}</strong>
 					<span>
@@ -262,7 +257,6 @@ import { ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { common, ipc, routes } from '@api/http'
 import { useMessage } from '@utils/hooks/message'
 import { pub } from '@utils/tools'
-import CloudCredential from '@/components/CloudCredential/index.vue'
 
 interface AliyunGroup {
 	group_id: number
@@ -342,7 +336,6 @@ const accountDialogVisible = ref(false)
 const accountSaving = ref(false)
 const editingAccountId = ref(0)
 const credentialsLoading = ref(false)
-const credentialReset = ref(0)
 let credentialRequestId = 0
 const accountFormRef = ref<FormInstance>()
 const createAccountForm = () => ({
@@ -416,7 +409,6 @@ const getAccountList = async () => {
 	const result = await request(routes.aliyun.list.path)
 	if (!result?.status) return Message.request(result)
 	accountList.value = result.data.data || []
-	credentialReset.value++
 	groupList.value = result.data.groups || []
 	if (!groupList.value.some(group => group.group_id === currentGroup.value)) currentGroup.value = -1
 	const now = Math.floor(Date.now() / 1000)
@@ -593,10 +585,8 @@ const readCredentials = async (accountId: number): Promise<{ access_key_id: stri
 	if (!result?.status) throw new Error(result?.msg || pub.lang('凭据读取失败'))
 	return result.data
 }
-const readSecret = async (accountId: number) => (await readCredentials(accountId)).access_key_secret
 const clearCredentialValues = () => {
 	credentialRequestId++
-	credentialReset.value++
 	credentialsLoading.value = false
 	accountForm.access_key_secret = ''
 }
@@ -1007,10 +997,6 @@ onBeforeUnmount(() => {
 	font-weight: 600;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-}
-
-.aliyun-card__credentials {
-	padding: 0.2rem 0 0.6rem;
 }
 
 .aliyun-card__more {
