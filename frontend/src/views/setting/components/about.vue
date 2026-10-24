@@ -14,7 +14,7 @@
 
 		<section class="about-section" aria-labelledby="about-features-heading">
 			<h2 id="about-features-heading">{{ pub.lang('本版本的扩展与调整') }}</h2>
-			<p class="about-section__intro">{{ pub.lang('在原有面板管理、SSH 终端和代理功能基础上，扩展云资源管理与运维工具。') }}</p>
+			<p class="about-section__intro">{{ pub.lang('在原有面板管理、SSH 终端和代理功能基础上，扩展云资源管理与运维工具，支持本地完整数据备份与恢复。') }}</p>
 			<div class="about-features">
 				<article class="about-feature">
 					<h3>{{ pub.lang('阿里云资源管理') }}</h3>

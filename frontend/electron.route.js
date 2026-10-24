@@ -8,6 +8,12 @@
 //      routes.panel.list.method 为调用方式，inovke: 单向调用，直接返回结果; ipc: 双向调用,需要on监听channel
 
 const routes = {
+	backup: {
+		export_data: { path: 'controller.backup.export_data', method: 'ipc', title: '导出完整数据备份' },
+		choose_import: { path: 'controller.backup.choose_import', method: 'ipc', title: '选择数据备份' },
+		import_data: { path: 'controller.backup.import_data', method: 'ipc', title: '导入完整数据备份' },
+		open_backups: { path: 'controller.backup.open_backups', method: 'ipc', title: '查看导入前备份' },
+	},
 	panel: {
 		list: {
 			title: '获取面板列表', // 接口标题

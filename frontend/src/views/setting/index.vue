@@ -81,6 +81,8 @@
 						</div>
 					</section>
 
+					<DataBackup />
+
 					<section class="setting-section" aria-labelledby="cache-heading">
 						<header class="setting-section__header">
 							<h2 id="cache-heading">{{ pub.lang('阿里云缓存') }}</h2>
@@ -182,6 +184,7 @@ import addProxy from './components/addProxy.vue'
 import NotPassword from './components/notPassword.vue'
 import About from './components/about.vue'
 import Changelog from './components/changelog.vue'
+import DataBackup from './components/dataBackup.vue'
 import { useLanguage } from '@plugins/language'
 import { useTheme } from '@/plugins/theme'
 import { pub,formatTime } from '@utils/tools'

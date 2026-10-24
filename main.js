@@ -15,10 +15,12 @@ if (!gotLock) app.quit();
 const coordinator = configure(paths);
 const Ps = require('ee-core/ps');
 Ps.getRootDir = () => paths.runtimeDir;
+const { applyPendingRestore } = require(`${sourceRoot}/class/data-backup`);
 let canStart = true;
 if (gotLock) {
   try {
     coordinator.enter(alone => {
+      if (alone) applyPendingRestore(paths);
       const { Sqlite } = require(`${sourceRoot}/class/sqlite`);
       new Sqlite({ initializeSchema: alone }).close();
     });
