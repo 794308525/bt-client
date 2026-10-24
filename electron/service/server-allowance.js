@@ -64,48 +64,95 @@ function trafficPackage(item, now) {
   };
 }
 
-function summarizeCdt(rows, accountId) {
-  const pools = FREE_LIMITS.map(pool => ({ ...pool, used_bytes: null, remaining_bytes: null }));
-  const sums = { mainland: 0, overseas: 0 };
-  const reasons = new Set();
-  if (!rows.length) reasons.add('本月暂无 CDT 账单');
-  let matched = 0;
-  let unknown = false;
+function cdtPool(region, regions = []) {
+  const value = String(region || '').trim().toLowerCase().replace(/（/g, '(').replace(/）/g, ')');
+  if (/^cn-(hongkong|macau|taiwan)(-|$)/.test(value)) return 'overseas';
+  if (/^cn-[a-z0-9-]+$/.test(value) || value === '中国内地' || value === '中国大陆') return 'mainland';
+  if (/^(ap|eu|us|me|na|sa|af|il)-[a-z0-9-]+$/.test(value) || value === '非中国内地' || value === '海外') return 'overseas';
+  if (!value) return '';
+  const matches = new Set();
+  for (const item of regions) {
+    const name = String(item.name || '').trim().toLowerCase().replace(/（/g, '(').replace(/）/g, ')');
+    if (name === value || name === `中国${value}` || name.endsWith(`(${value})`)) {
+      const pool = cdtPool(item.region_id);
+      if (pool) matches.add(pool);
+    }
+  }
+  return matches.size === 1 ? [...matches][0] : '';
+}
+
+function summarizeCdt(rows, accountId, regions = []) {
+  const pools = FREE_LIMITS.map(pool => ({ ...pool, used_bytes: null, remaining_bytes: null, state: 'unverified', reason: '' }));
+  const evidence = Object.fromEntries(pools.map(pool => [pool.key, { free: 0, exhausted: false, reasons: new Set() }]));
+  const unknown = (pool, reason) => {
+    (pool ? [pool] : pools.map(item => item.key)).forEach(key => evidence[key].reasons.add(reason));
+  };
+  if (!accountId) unknown('', '账单缺少账号归属字段');
   for (const row of rows) {
-    // 多账号代付账单不能混入当前账号的共享额度。
-    if (!accountId || !row.ownerID) { unknown = true; reasons.add('账单缺少账号归属字段'); continue; }
+    // 额度按资源所属账号计算，不能混入代付账号下其他成员的账单。
+    if (!accountId || !row.ownerID) { unknown('', '账单缺少账号归属字段'); continue; }
     if (String(row.ownerID) !== String(accountId)) continue;
     const commodity = String(row.commodityCode || '');
-    if (/^cdt_(cdtir|cucbdt)_/.test(commodity)) continue;
-    if (!/^cdt_internet_public_(cn|intl)$/.test(commodity) || !PUBLIC_ITEMS.has(row.billingItemCode)) {
-      unknown = true;
-      reasons.add(/^cdt_DataTransfer_/.test(commodity) || row.billingItemCode === 'internet_traffic' ? 'CDT 2.0 账单尚缺免费额度识别字段' : '账单包含尚未支持识别的商品或计费项');
+    if (/^cdt_(cdtir|cucbdt)_/i.test(commodity)) continue;
+    // 预付费资源包订单记录购买容量，不属于公网流量消耗，也不占用月度免费额度。
+    if (/^cdt_Resource_dp_(cn|intl)$/i.test(commodity)) continue;
+    const legacy = /^cdt_internet_public_(cn|intl)$/i.test(commodity);
+    const modern = /^cdt_DataTransfer_public_(cn|intl)$/i.test(commodity);
+    if (modern && row.billingItemCode === 'inter_region_traffic') continue;
+    const parts = legacy ? String(row.instanceID || '').match(/^[^;]+;([a-z0-9-]+);(BGP|BGP_PRO);(\d+)$/i) : null;
+    const pool = cdtPool(parts ? parts[1] : row.region, regions);
+    if ((!legacy && !modern) || (legacy && !PUBLIC_ITEMS.has(row.billingItemCode)) || (modern && row.billingItemCode !== 'internet_traffic')) {
+      unknown(pool, '账单包含尚未支持识别的商品或计费项');
       continue;
     }
-    // 仅识别文档明确的 CDT 1.0 出账标识；2.0 缺少费用类型字段时不猜余额。
-    const parts = String(row.instanceID || '').match(/^[^;]+;([a-z0-9-]+);BGP;(\d+)$/);
-    if (!parts) { unknown = true; reasons.add('账单实例标识不符合已支持的格式'); continue; }
-    const region = parts[1];
-    const pool = region === 'cn-hongkong' || /^(ap|eu|us|me|na|sa|af|cn-hongkong)-/.test(region) ? 'overseas' : /^cn-/.test(region) ? 'mainland' : '';
-    const usage = bytes(row.usage, row.usageUnit);
+    if (legacy && !parts) { unknown(pool, '账单实例标识不符合已支持的格式'); continue; }
+    const line = parts ? parts[2] : String(row.instanceConfig || '');
+    // 精品线路不享受免费额度，不能凭收费账单推断普通 BGP 的免费额度已用尽。
+    if (/BGP_PRO|精品|\bBGP\b[^;\n]*\bPro\b/i.test(line)) continue;
+    if (!pool) { unknown('', '账单地域暂无法识别'); continue; }
+    // 账单用量不含已被资源包抵扣的部分；抵扣后的零用量仍可能已经进入付费阶梯。
+    const billedUsage = bytes(row.usage, row.usageUnit);
+    const deducted = String(row.deductedByResourcePackage ?? '').trim();
+    const deductedUsage = deducted ? bytes(deducted, row.usageUnit) : 0;
+    const usage = billedUsage !== null && deductedUsage !== null ? nonnegative(billedUsage + deductedUsage) : null;
     const price = nonnegative(row.listPrice);
-    if (!pool || usage === null || price === null || row.item !== 'PayAsYouGoBill' || (parts[2] === '0') !== (price === 0)) {
-      unknown = true;
-      if (!pool) reasons.add('账单地域暂无法识别');
-      if (usage === null || price === null) reasons.add('账单缺少有效用量、单位或单价');
-      if (row.item !== 'PayAsYouGoBill') reasons.add('账单含退款、调账或其他未支持的类型');
-      if (price !== null && (parts[2] === '0') !== (price === 0)) reasons.add('免费阶梯与单价不一致');
+    if (usage === null || price === null || row.item !== 'PayAsYouGoBill') {
+      unknown(pool, row.item !== 'PayAsYouGoBill' ? '账单含退款、调账或其他未支持的类型' : '账单缺少有效用量、资源包抵扣量、单位或单价');
       continue;
     }
-    matched++;
-    if (parts[2] === '0') sums[pool] += usage;
+    if (usage === 0) continue;
+    if (legacy) {
+      const tier = Number(parts[3]);
+      if (!Number.isSafeInteger(tier) || (tier === 0) !== (price === 0)) { unknown(pool, '免费阶梯与单价不一致'); continue; }
+      if (tier === 0) evidence[pool].free += usage;
+      else evidence[pool].exhausted = true;
+    } else if (price === 0) {
+      // CDT 2.0 的免费公网流量目录价为零，地域改从账单地域字段读取。
+      evidence[pool].free += usage;
+    } else if (/\bBGP\b/i.test(line)) {
+      evidence[pool].exhausted = true;
+    } else {
+      unknown(pool, 'CDT 2.0 收费账单缺少线路信息，暂无法确认免费额度是否用尽');
+    }
   }
-  if (matched && !unknown && pools.every(pool => sums[pool.key] <= pool.total_bytes)) {
-    pools.forEach(pool => { pool.used_bytes = sums[pool.key]; pool.remaining_bytes = pool.total_bytes - sums[pool.key]; });
+  for (const pool of pools) {
+    const item = evidence[pool.key];
+    if (item.exhausted || item.free >= pool.total_bytes) {
+      pool.used_bytes = pool.total_bytes;
+      pool.remaining_bytes = 0;
+      pool.state = 'exhausted';
+      pool.reason = item.exhausted ? '已出现普通 BGP 收费阶梯，按该地域免费额度已用尽计算' : '已出账免费用量已达到该地域月额度';
+    } else if (item.reasons.size) {
+      pool.reason = [...item.reasons].join('；');
+    } else {
+      pool.used_bytes = item.free;
+      pool.remaining_bytes = pool.total_bytes - item.free;
+      pool.state = item.free > 0 ? 'active' : 'unused';
+      pool.reason = item.free > 0 ? '按已出账免费公网流量累计，不包含未出账用量' : '完整查询中未发现该地域已出账免费公网用量，按已出账口径显示未使用';
+    }
   }
-  if (pools.some(pool => sums[pool.key] > pool.total_bytes)) reasons.add('免费用量超过月额度，汇总结果需核对');
-  if (!matched && !reasons.size) reasons.add('没有可核对当前账号免费额度的公网账单');
-  return { pools, verified: pools.every(pool => pool.used_bytes !== null), has_bills: rows.length > 0, reasons: [...reasons] };
+  return { pools, verified: pools.every(pool => pool.used_bytes !== null), has_bills: rows.length > 0,
+    reasons: [...new Set(pools.filter(pool => pool.used_bytes === null).map(pool => `${pool.label}：${pool.reason}`))] };
 }
 
 class ServerAllowanceService {
@@ -191,8 +238,14 @@ class ServerAllowanceService {
       if (!nextToken) {
         const total = nonnegative(body.data.totalCount);
         if (total !== null && total !== rows.length) throw new AliyunServiceError('CDT 账单数据未完整返回，请稍后刷新', 'IncompleteAllowanceData');
-        const summary = summarizeCdt(rows, owner);
-        return { status: summary.verified ? 'active' : 'unverified', ...summary, message: summary.verified ? '按已出账用量统计，账单通常延迟约 24 小时，不包含未结算用量。' : `${summary.reasons.join('；')}。免费已用和剩余暂不计算，可前往 CDT 控制台核对。` };
+        let regions = [];
+        if (rows.some(row => String(row.ownerID) === String(owner) && /^cdt_DataTransfer_/i.test(String(row.commodityCode || '')) && row.billingItemCode === 'internet_traffic' && !cdtPool(row.region))) {
+          try { regions = await this.service.getRegions(account, 'ecs'); } catch { /* 无地域查询权限时保留对应额度待核对。 */ }
+        }
+        const summary = summarizeCdt(rows, owner, regions);
+        const status = summary.verified ? 'active' : summary.pools.some(pool => pool.used_bytes !== null) ? 'partial' : 'unverified';
+        const note = '按本月已出账账单统计，通常延迟约 24 小时，不代表实时余量；未发现已出账公网用量时按未使用显示。';
+        return { status, ...summary, message: summary.verified ? note : `${summary.reasons.join('；')}。对应地域余量待核对。${note}` };
       }
       if (tokens.has(nextToken)) break;
       tokens.add(nextToken);

@@ -67,15 +67,15 @@
 
 		<el-tabs v-model="activeTab" class="resource-tabs" @tab-change="handleTabChange">
 			<el-tab-pane name="servers" class="server-pane">
-				<ServerAllowance :account-id="accountId" :active="activeTab === 'servers'" :server-revision="serverRevision" :server-error="serverLoadError" />
+				<ServerAllowance :account-id="accountId" :active="activeTab === 'servers'" />
 				<div class="resource-toolbar">
 					<div class="resource-toolbar__filters">
+						<el-radio-group v-model="serverQuery.source" size="small" class="server-source-filter" :aria-label="pub.lang('服务器类型')">
+							<el-radio-button v-for="item in serverSourceOptions" :key="item.value" :value="item.value">
+								<span>{{ item.label }}</span><span class="server-source-filter__count">{{ serverLoaded ? item.count : '--' }}</span>
+							</el-radio-button>
+						</el-radio-group>
 						<el-input v-model="serverQuery.keyword" clearable :prefix-icon="Search" :placeholder="pub.lang('搜索名称、实例 ID 或 IP')" />
-						<el-select v-model="serverQuery.source" :placeholder="pub.lang('服务器类型')">
-							<el-option :label="pub.lang('全部类型')" value="all" />
-							<el-option label="ECS" value="ecs" />
-							<el-option :label="pub.lang('轻量应用服务器')" value="swas" />
-						</el-select>
 						<el-select v-model="serverQuery.region" :placeholder="pub.lang('地域')">
 							<el-option :label="pub.lang('全部地域')" value="all" />
 							<el-option v-for="region in serverRegions" :key="region.value" :label="region.label" :value="region.value" />
@@ -1102,14 +1102,21 @@ const switchResourceTab = (name: string) => {
 const servers = ref<CloudServer[]>([])
 const serverLoading = ref(false)
 const serverLoaded = ref(false)
-const serverRevision = ref(0)
-const serverLoadError = ref('')
 const serverPartial = ref(false)
 const showServerIp = ref(false)
 const openingServerId = ref('')
 const serverConnectRef = ref<InstanceType<typeof ServerConnect>>()
 const serverPage = ref(1)
 const serverQuery = reactive({ keyword: '', source: 'all', region: 'all', status: 'all' })
+const serverSourceOptions = computed(() => {
+	const counts = { all: servers.value.length, ecs: 0, swas: 0 }
+	for (const server of servers.value) counts[server.source]++
+	return [
+		{ value: 'all', label: pub.lang('全部'), count: counts.all },
+		{ value: 'ecs', label: 'ECS', count: counts.ecs },
+		{ value: 'swas', label: pub.lang('轻量'), count: counts.swas },
+	]
+})
 const serverRegions = computed(() => Array.from(new Map<string, string>(servers.value.map(server => [server.region_id, server.region_name || server.region_id])), ([value, label]) => ({ value, label })).sort((a, b) => a.value.localeCompare(b.value)))
 const serverStatuses = computed(() => Array.from(new Set(servers.value.map(item => item.status).filter(Boolean))).sort())
 const filteredServers = computed(() => {
@@ -1811,11 +1818,9 @@ const refreshBalance = async () => {
 }
 const loadServers = async (force = false) => {
 	serverLoading.value = true
-	serverLoadError.value = ''
 	try {
 		const result = await request(routes.aliyun.server_list.path, { account_id: accountId, force })
 		if (!result?.status) {
-			serverLoadError.value = result?.msg || pub.lang('服务器列表查询失败')
 			applyResourceErrorStatus('server', result)
 			return Message.request(result)
 		}
@@ -1826,9 +1831,8 @@ const loadServers = async (force = false) => {
 		serverLoaded.value = true
 		if (force) { await nextTick(); loadServerTraffic(true) }
 	} catch (error) {
-		serverLoadError.value = error instanceof Error ? error.message : pub.lang('服务器列表查询失败')
-		Message.error(serverLoadError.value)
-	} finally { serverLoading.value = false; serverRevision.value++ }
+		Message.error(error instanceof Error ? error.message : pub.lang('服务器列表查询失败'))
+	} finally { serverLoading.value = false }
 }
 const openServer = async (server: CloudServer) => {
 	if (String(server.os_type).toLowerCase() !== 'windows') { serverConnectRef.value?.open(server); return }
@@ -2786,6 +2790,8 @@ onBeforeUnmount(deactivatePageListeners)
 .resource-toolbar { justify-content: space-between; gap: 1.6rem; margin-bottom: 1rem; }
 .resource-toolbar__filters { min-width: 0; gap: .8rem; .el-input { width: 30rem; } .el-select { width: 15rem; } }
 .resource-toolbar__actions { flex: 0 0 auto; gap: .6rem; }
+.server-source-filter { flex-shrink: 0; flex-wrap: nowrap; }
+.server-source-filter__count { margin-left: .5rem; font-variant-numeric: tabular-nums; opacity: .75; }
 .instance-name { font-weight: 600; line-height: 1.35; }
 .server-ip { display: flex; align-items: center; gap: .35rem; min-height: 2.2rem; }
 .server-ip__copy { opacity: .58; transition: opacity .15s; &:hover { opacity: 1; } }
