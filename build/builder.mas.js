@@ -6,6 +6,8 @@ module.exports = {
   ...base,
   // 商店版须与 Apple 描述文件一致；普通 DMG 保留原应用标识。
   appId: 'cn.iiar.devops',
+  // 每次商店出包前递增 package.json，构建号与该版本保持一致。
+  buildVersion: require('../package.json').version,
   npmRebuild: false,
   directories: {
     ...base.directories,
