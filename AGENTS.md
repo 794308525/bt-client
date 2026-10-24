@@ -5,7 +5,7 @@
 - 项目展示名称为“寰宇运维”，基于堡塔多机管理（bt-client）二次开发，属于非官方维护版本；保留原项目来源、版权和许可说明。
 - 宝塔官网展示链接统一使用 `https://www.bt.cn/u/XbfWPO`；原项目与本版本源码链接继续指向各自仓库，不替换接口、下载或文档地址。
 - Cloudflare 暂时隐藏导航入口和功能介绍，保留代码及已有数据，未经明确要求不删除。
-- 为兼容现有数据，内部包名、应用标识、协议和 `bt-client` 用户数据目录保持不变，不随展示名称修改。
+- 为兼容现有数据，内部包名、协议和 `bt-client` 用户数据目录保持不变，不随展示名称修改。普通安装包保留原应用标识；Mac App Store 版单独使用描述文件登记的 `cn.iiar.devops`，数据位于系统沙盒中。
 
 ## 基本规则
 
@@ -51,20 +51,23 @@ npm run dev
 - 默认打包当前环境：在 macOS 使用缓存感知的 `npm run build-m`，Windows 使用 `npm run build-w`，Linux 使用 `npm run build-l`。
 - macOS 正式发布或明确要求全量打包时使用 `npm run build-m-full`；普通安装包验收和连续修改后的重复出包使用 `npm run build-m`。
 - macOS 默认只生成 DMG 安装包，不生成 ZIP 和 ZIP blockmap；用户明确要求时才额外压缩。
+- 明确要求 Mac App Store 上架包时，正式发布使用 `npm run build-mas-full`，重复出包使用 `npm run build-mas`；最低系统为 macOS 12.0，生成当前架构的签名 PKG，产物位于 `out/app-store/mas-当前架构/`。必须使用 MAS Electron，不能拿普通 DMG 改后缀。
 - `build-m-arm64` 也必须先通过 `prepare-package`，不得改回只打包、不检查前端和主进程产物的旧流程。
 - Windows 和 Linux 尚未接入当前 macOS 缓存打包入口；在对应系统打包时仍按各自脚本执行原生依赖和资源检查。
 - 打包产物在 `out/`，交付前检查文件名中的系统、版本和架构。
 
 ## 签名与公证
 
-- 当前没有配置发布证书和 Apple 公证凭据，不要伪造签名或公证。打包时跳过签名和 notarization，并在交付说明中标注“未签名/未公证”。
-- 当前 `builder.json` 已禁用签名且不配置 `afterSign`，打包时不再生成临时配置。有签名凭据后才能恢复签名和公证，并应同步更新本约定。
-- 没有凭据时不要将签名或公证缺失误报为代码、功能或打包失败。
+- 普通 DMG 的 `builder.json` 继续禁用签名，不配置 `afterSign`；没有 Developer ID 和公证凭据时，交付标注“未签名/未公证”。
+- Mac App Store 使用 `build/builder.mas.js`，团队 `9LHTAY9957`；钥匙串需具备 Apple Distribution 应用签名私钥和 Mac Installer Distribution 安装包签名私钥，并提供匹配的发布描述文件。缺失时应停止，不能交付未签名商店包。
+- `苹果证书/` 只用于本地签名，已从 Git 和安装包排除；不得提交或输出私钥、P12 密码和凭据文本。描述文件仅由签名工具嵌入应用指定位置。
+- 商店版启用 App Sandbox，停用应用内自动更新，由 Mac App Store 分发更新。MAS 上架包不走 Developer ID 公证流程，发布证书签名的应用不能作为本地开发版直接运行；运行验收需另备同团队的开发证书和开发描述文件。
+- 交付前核对应用和 PKG 签名、描述文件、Bundle ID、版本与架构，并检查包内无开发数据或证书原件。打包不等于上传或审核通过，未经用户要求不上传提交。
 
 ## 安装包交付前检查
 
 - 不要删除用户原有数据。安装前备份对应平台的 `bt-client` 用户数据目录，尤其是 `data/data.db`。
-- 安装包不应包含开发目录的 `data/`、`logs/` 或未经校验的 CLI。
+- 安装包不应包含开发目录的 `data/`、`logs/`、发布证书原件、`node_gyp_bins` 编译工具、SQLite 测试扩展或未经校验的 CLI。
 - 至少执行：
 
   ```bash

@@ -1,5 +1,5 @@
 const { app: electronApp } = require('electron');
-const { autoUpdater } = require("electron-updater");
+const autoUpdater = process.mas ? null : require('electron-updater').autoUpdater;
 const is = require('ee-core/utils/is');
 const Log = require('ee-core/log');
 const Conf = require('ee-core/config');
@@ -20,6 +20,7 @@ class AutoUpdaterAddon {
    * 创建
    */
   create () {
+    if (process.mas) return;
     Log.info('[autoUpdater] load');
     const cfg = Conf.getValue('addons.autoUpdater');
     if ((is.windows() && cfg.windows)
@@ -121,6 +122,7 @@ class AutoUpdaterAddon {
    * 检查更新
    */
   checkUpdate () {
+    if (process.mas) return;
     autoUpdater.checkForUpdates();
   }
   
@@ -128,6 +130,7 @@ class AutoUpdaterAddon {
    * 下载更新
    */
   download () {
+    if (process.mas) return;
     autoUpdater.downloadUpdate();
   }
 

@@ -3,7 +3,7 @@ const { Controller } = require('ee-core');
 const { pub } = require("../class/public.js");
 const path = require('path');
 const Services = require('ee-core/services');
-const { autoUpdater } = require("electron-updater");
+const autoUpdater = process.mas ? null : require('electron-updater').autoUpdater;
 
 
 class IndexController extends Controller {
@@ -353,6 +353,9 @@ class IndexController extends Controller {
      */
     async check_update(args,event) {
         let channel = args.channel;
+        if (process.mas) {
+            return pub.send_success_msg(event,channel,pub.lang('请通过 Mac App Store 获取应用更新'));
+        }
         autoUpdater.checkForUpdates();
 
         const status = {

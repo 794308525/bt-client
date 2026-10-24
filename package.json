@@ -31,6 +31,8 @@
     "build-m": "npm run prepare-package && electron-builder --config=./electron/config/builder.json --config.npmRebuild=false --mac dmg",
     "build-m-full": "npm run clean && npm run prepare-package -- --force && electron-builder --config=./electron/config/builder.json --config.npmRebuild=false --mac dmg",
     "build-m-arm64": "npm run prepare-package -- --target=darwin-arm64 && electron-builder --config=./electron/config/builder.json --config.npmRebuild=false --mac dmg --arm64",
+    "build-mas": "npm run prepare-package && electron-builder --config=./build/builder.mas.js --mac mas --publish never",
+    "build-mas-full": "npm run clean && npm run prepare-package -- --force && electron-builder --config=./build/builder.mas.js --mac mas --publish never",
     "build-l": "ee-bin build --cmds=frontend && ee-bin move --flag=frontend_dist && ee-bin encrypt && electron-builder --config=./electron/config/builder.json -l=deb --x64",
     "build-l-32": "electron-builder --config=./electron/config/builder.json -l=deb --ia32",
     "build-l-64": "electron-builder --config=./electron/config/builder.json -l=deb --x64",
