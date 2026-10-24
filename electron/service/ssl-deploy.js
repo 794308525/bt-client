@@ -5,6 +5,9 @@ const path = require('path');
 const { pub } = require('../class/public.js');
 const { sslService, SslServiceError, normalizeSslError } = require('./ssl.js');
 const { aliyunService } = require('./aliyun.js');
+const { claimWork, ifTaskIdle } = require('../class/application-data');
+
+const workKey = task => `ssl-${task.account_id}-${task.site_id}-${task.domain}`;
 
 const POLL_INTERVAL = 60 * 1000;
 const MAX_CONSECUTIVE_RETRIES = 10;
@@ -44,7 +47,7 @@ class SslDeployService {
 
   log(event, data = {}) {
     try {
-      const logDir = path.join(pub.get_data_path(), 'logs');
+      const logDir = path.join(pub.get_root_path(), 'logs');
       if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true, mode: 0o700 });
       const logFile = path.join(logDir, 'ssl-deploy.log');
       if (fs.existsSync(logFile) && fs.statSync(logFile).size > 2 * 1024 * 1024) {
@@ -261,99 +264,111 @@ class SslDeployService {
     const channelId = Number(data.channel_id) || 0;
     if (!accountId || !siteId || !channelId) throw new SslServiceError('证书申请参数不完整', 'InvalidDeployTask');
     const normalized = this.normalizeDomain(data.domain, data.site_name);
-    const channel = sslService.getChannel(channelId);
-    const now = pub.time();
-    const duplicateTask = pub.M('ssl_deploy_task').where(
-      'account_id=? AND site_id=? AND domain=? AND status IN (?,?,?,?,?)',
-      [accountId, siteId, normalized.domain, ...ACTIVE_STATUSES],
-    )
-      .order('task_id DESC').find();
-    if (duplicateTask) {
-      throw new SslServiceError('该域名已有正在执行的证书申请，请勿重复提交', 'DeployTaskAlreadyRunning');
-    }
-    const taskId = pub.M('ssl_deploy_task').insert({
-      account_id: accountId,
-      site_id: siteId,
-      site_name: normalized.site,
-      channel_id: channelId,
-      provider: channel.provider,
-      order_id: '',
-      domain: normalized.domain,
-      brand: String(data.brand || '').trim(),
-      status: 'creating',
-      challenge_json: '[]',
-      challenge_record_ids: '[]',
-      esa_certificate_id: '',
-      last_error: '',
-      retry_count: 0,
-      next_check_time: now,
-      addtime: now,
-      update_time: now,
-    });
-    const task = pub.M('ssl_deploy_task').where('task_id=?', taskId).find();
+    const releaseData = claimWork(workKey({ account_id: accountId, site_id: siteId, domain: normalized.domain }));
     try {
-      const created = await sslService.createCertificate(channelId, {
-        domain: normalized.domain,
-        brand: data.brand,
-        validate: 'dns',
-        days: data.days,
-      });
-      const orderId = String(created && (created.order_id || created.orderId) || '').trim();
-      if (!orderId) throw new SslServiceError('证书渠道未返回订单号', 'MissingOrderId');
-      task.order_id = orderId;
-      this.updateTask(taskId, { order_id: orderId, status: 'creating', next_check_time: now + 60 });
-      let challenges = this.normalizeChallenges(created, normalized.domain);
-      challenges = await this.ensureTaskChallenges(task, challenges);
-      this.updateTask(taskId, {
-        order_id: orderId,
-        status: 'dns_created',
-        challenge_json: JSON.stringify(challenges),
-        last_error: '',
-        next_check_time: now + 30,
-      });
-      this.log('dns_created', { task_id: taskId, account_id: accountId, site_id: siteId, order_id: orderId, domain: normalized.domain, stage: 'dns', status: 'dns_created', challenge_count: challenges.length });
-      try {
-        await sslService.verifyCertificate(channelId, orderId);
-        this.updateTask(taskId, { status: 'waiting_issue', next_check_time: now + 30 });
-      } catch (error) {
-        const normalizedError = normalizeSslError(error);
-        this.updateTask(taskId, { status: 'verifying', last_error: normalizedError.message, next_check_time: now + 60 });
+      const channel = sslService.getChannel(channelId);
+      const now = pub.time();
+      const duplicateTask = pub.M('ssl_deploy_task').where(
+        'account_id=? AND site_id=? AND domain=? AND status IN (?,?,?,?,?)',
+        [accountId, siteId, normalized.domain, ...ACTIVE_STATUSES],
+      )
+        .order('task_id DESC').find();
+      if (duplicateTask) {
+        throw new SslServiceError('该域名已有正在执行的证书申请，请勿重复提交', 'DeployTaskAlreadyRunning');
       }
-      return this.taskView(pub.M('ssl_deploy_task').where('task_id=?', taskId).find());
-    } catch (error) {
-      const normalizedError = error && error.name === 'AliyunServiceError' ? error : normalizeSslError(error);
-      const canResume = Boolean(task.order_id);
-      const fatal = !canResume || this.isFatalError(normalizedError);
-      this.updateTask(taskId, {
-        order_id: task.order_id || '',
-        status: fatal ? 'failed' : 'creating',
-        last_error: normalizedError.message,
-        retry_count: 1,
-        next_check_time: fatal ? 0 : now + 60,
+      const taskId = pub.M('ssl_deploy_task').insert({
+        account_id: accountId,
+        site_id: siteId,
+        site_name: normalized.site,
+        channel_id: channelId,
+        provider: channel.provider,
+        order_id: '',
+        domain: normalized.domain,
+        brand: String(data.brand || '').trim(),
+        status: 'creating',
+        challenge_json: '[]',
+        challenge_record_ids: '[]',
+        esa_certificate_id: '',
+        last_error: '',
+        retry_count: 0,
+        next_check_time: now,
+        addtime: now,
+        update_time: now,
       });
-      this.log('create_failed', { task_id: taskId, account_id: accountId, site_id: siteId, order_id: task.order_id, domain: normalized.domain, stage: 'create', status: fatal ? 'failed' : 'retrying', error_code: normalizedError.code, request_id: normalizedError.requestId });
-      throw normalizedError;
-    }
+      const task = pub.M('ssl_deploy_task').where('task_id=?', taskId).find();
+      try {
+        const created = await sslService.createCertificate(channelId, {
+          domain: normalized.domain,
+          brand: data.brand,
+          validate: 'dns',
+          days: data.days,
+        });
+        const orderId = String(created && (created.order_id || created.orderId) || '').trim();
+        if (!orderId) throw new SslServiceError('证书渠道未返回订单号', 'MissingOrderId');
+        task.order_id = orderId;
+        this.updateTask(taskId, { order_id: orderId, status: 'creating', next_check_time: now + 60 });
+        let challenges = this.normalizeChallenges(created, normalized.domain);
+        challenges = await this.ensureTaskChallenges(task, challenges);
+        this.updateTask(taskId, {
+          order_id: orderId,
+          status: 'dns_created',
+          challenge_json: JSON.stringify(challenges),
+          last_error: '',
+          next_check_time: now + 30,
+        });
+        this.log('dns_created', { task_id: taskId, account_id: accountId, site_id: siteId, order_id: orderId, domain: normalized.domain, stage: 'dns', status: 'dns_created', challenge_count: challenges.length });
+        try {
+          await sslService.verifyCertificate(channelId, orderId);
+          this.updateTask(taskId, { status: 'waiting_issue', next_check_time: now + 30 });
+        } catch (error) {
+          const normalizedError = normalizeSslError(error);
+          this.updateTask(taskId, { status: 'verifying', last_error: normalizedError.message, next_check_time: now + 60 });
+        }
+        return this.taskView(pub.M('ssl_deploy_task').where('task_id=?', taskId).find());
+      } catch (error) {
+        const normalizedError = error && error.name === 'AliyunServiceError' ? error : normalizeSslError(error);
+        const canResume = Boolean(task.order_id);
+        const fatal = !canResume || this.isFatalError(normalizedError);
+        this.updateTask(taskId, {
+          order_id: task.order_id || '',
+          status: fatal ? 'failed' : 'creating',
+          last_error: normalizedError.message,
+          retry_count: 1,
+          next_check_time: fatal ? 0 : now + 60,
+        });
+        this.log('create_failed', { task_id: taskId, account_id: accountId, site_id: siteId, order_id: task.order_id, domain: normalized.domain, stage: 'create', status: fatal ? 'failed' : 'retrying', error_code: normalizedError.code, request_id: normalizedError.requestId });
+        throw normalizedError;
+      }
+    } finally { releaseData(); }
   }
 
   async retryTask(taskId) {
     const task = pub.M('ssl_deploy_task').where('task_id=?', Number(taskId) || 0).find();
     if (!task) throw new SslServiceError('证书部署任务不存在', 'DeployTaskNotFound');
     if (task.status === 'completed') return this.taskView(task);
-    if (this.processingTaskIds.has(Number(task.task_id))) {
-      throw new SslServiceError('证书部署任务正在执行，请稍后刷新', 'DeployTaskBusy');
-    }
-    this.updateTask(task.task_id, { status: task.order_id ? 'waiting_issue' : 'failed', last_error: '', retry_count: 0, next_check_time: pub.time() });
-    if (task.order_id) await this.processTask({ ...task, status: 'waiting_issue', next_check_time: 0 });
-    return this.taskView(pub.M('ssl_deploy_task').where('task_id=?', task.task_id).find());
+    const releaseData = claimWork(workKey(task));
+    try {
+      if (this.processingTaskIds.has(Number(task.task_id))) {
+        throw new SslServiceError('证书部署任务正在执行，请稍后刷新', 'DeployTaskBusy');
+      }
+      this.updateTask(task.task_id, { status: task.order_id ? 'waiting_issue' : 'failed', last_error: '', retry_count: 0, next_check_time: pub.time() });
+      if (task.order_id) await this.processTask({ ...task, status: 'waiting_issue', next_check_time: 0 });
+      return this.taskView(pub.M('ssl_deploy_task').where('task_id=?', task.task_id).find());
+    } finally { releaseData(); }
   }
 
-  async processTask(task) {
+  async processTask(task, background = false) {
     const taskId = Number(task.task_id);
     if (this.processingTaskIds.has(taskId)) return;
+    const releaseData = background ? ifTaskIdle(workKey(task), () => claimWork(workKey(task))) : claimWork(workKey(task));
+    if (!releaseData) return;
     this.processingTaskIds.add(taskId);
     const now = pub.time();
     try {
+      if (background) {
+        task = pub.M('ssl_deploy_task').where('task_id=?', taskId).find();
+        if (!task || !ACTIVE_STATUSES.includes(task.status) || Number(task.next_check_time || 0) > now) return;
+      }
       if (!task.order_id) throw new SslServiceError('任务缺少证书订单号，请重新申请', 'MissingOrderId');
       const detail = await sslService.getCertificateDetail(task.channel_id, task.order_id);
       const orderStatus = String(detail && detail.status || '').trim().toLowerCase();
@@ -415,6 +430,7 @@ class SslDeployService {
       this.log('process_error', { task_id: task.task_id, account_id: task.account_id, site_id: task.site_id, order_id: task.order_id, domain: task.domain, stage: task.status, status: fatal ? 'failed' : 'retrying', error_code: normalizedError.code, request_id: normalizedError.requestId });
     } finally {
       this.processingTaskIds.delete(taskId);
+      releaseData();
     }
   }
 
@@ -425,7 +441,7 @@ class SslDeployService {
       const now = pub.time();
       const tasks = pub.M('ssl_deploy_task').order('task_id ASC').select()
         .filter(item => ACTIVE_STATUSES.includes(item.status) && Number(item.next_check_time || 0) <= now);
-      for (const task of tasks) await this.processTask(task);
+      for (const task of tasks) await this.processTask(task, true);
     } finally {
       this.processing = false;
     }

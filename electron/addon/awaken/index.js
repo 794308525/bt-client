@@ -21,7 +21,7 @@ class AwakenAddon {
     const cfg = Conf.getValue('addons.awaken');
     this.protocol = cfg.protocol;
   
-    electronApp.setAsDefaultProtocolClient(this.protocol);
+    if (electronApp.isPackaged) electronApp.setAsDefaultProtocolClient(this.protocol);
   
     this.handleArgv(process.argv);
     electronApp.on('second-instance', (event, argv) => {

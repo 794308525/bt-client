@@ -2,12 +2,13 @@ const sqlite3 = require('better-sqlite3')
 const fs = require('fs')
 const Ps = require('ee-core/ps');
 const CryptoJS = require('crypto-js');
+const { processPaths } = require('./application-data');
 
 const IS_CHECK_TABLE = {status:false}
 
 class Sqlite {
-    constructor() {
-        this.DB_PATH = Ps.getRootDir() + '/data'
+    constructor({ initializeSchema = true } = {}) {
+        this.DB_PATH = processPaths()?.dataDir || Ps.getRootDir() + '/data'
         this.DB_FILE = ''
         this.DB_OBJ = null
         this.TABLE_NAME = ''
@@ -35,10 +36,11 @@ class Sqlite {
         // console.log('dirname: ',__dirname)
         // console.log('数据库文件路径：' + this.DB_FILE)
 
-        this.DB_OBJ = sqlite3(this.DB_FILE)
+        this.DB_OBJ = sqlite3(this.DB_FILE, { timeout: 10000 })
 
 
-        if(!IS_CHECK_TABLE.status){
+        if(!IS_CHECK_TABLE.status && initializeSchema){
+          try { this.DB_OBJ.transaction(() => {
             // 旧版数据库可能缺少新增表，必须先建表再补字段。
             this.create()
             this.checkField('panel_info', 'area', 'TEXT', '""')
@@ -108,7 +110,10 @@ class Sqlite {
             ]
             detailFields.forEach(field => this.checkField('site_check_request_detail', field[0], field[1], field[2]))
             IS_CHECK_TABLE.status = true
+          })(); } catch (error) { this.DB_OBJ.close(); throw error; }
         }
+        // 另一版本已在同一数据结构下完成初始化，本进程只打开连接。
+        IS_CHECK_TABLE.status = true
         
     }
 

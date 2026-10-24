@@ -1,6 +1,7 @@
 'use strict';
 const { Service } = require('ee-core');
 const { pub } = require("../class/public.js");
+const { updateJson } = require('../class/application-data');
 
 class UserService extends Service {
 
@@ -31,10 +32,12 @@ class UserService extends Service {
             'time': pub.time()
         }
 
-        client_id = pub.md5(JSON.stringify(pdata));
-        pdata.client_id = client_id;
-        pub.write_file(client_id_file, JSON.stringify(pdata));
-        return client_id;
+        return updateJson(client_id_file, value => {
+            if (value.client_id && value.client_id.length === 32) return value.client_id;
+            client_id = pub.md5(JSON.stringify(pdata));
+            Object.assign(value, pdata, { client_id });
+            return client_id;
+        });
     }
 
     /**
@@ -57,16 +60,17 @@ class UserService extends Service {
      * @return {boolean}
      */
     unbind() {
-        let bind_info = this.get_bind_info();
-        if (bind_info.token) delete bind_info.token;
-        if (bind_info.secret_key) delete bind_info.secret_key;
-        if (bind_info.username) delete bind_info.username;
-        if (bind_info.uid) delete bind_info.uid;
-        if (bind_info.nickname) delete bind_info.nickname;
-        if (bind_info.bind_time) delete bind_info.bind_time;
-        if (bind_info.cid) delete bind_info.cid;
-        let client_id_file = pub.get_data_path() + '/user.json';
-        pub.write_file(client_id_file, JSON.stringify(bind_info));
+        this.get_client_id();
+        const client_id_file = pub.get_data_path() + '/user.json';
+        updateJson(client_id_file, bind_info => {
+            if (bind_info.token) delete bind_info.token;
+            if (bind_info.secret_key) delete bind_info.secret_key;
+            if (bind_info.username) delete bind_info.username;
+            if (bind_info.uid) delete bind_info.uid;
+            if (bind_info.nickname) delete bind_info.nickname;
+            if (bind_info.bind_time) delete bind_info.bind_time;
+            if (bind_info.cid) delete bind_info.cid;
+        });
         return true;
     }
 
@@ -182,14 +186,7 @@ class UserService extends Service {
             pub.log('user.json not found', client_id_file);
             return false;
         }
-        let f_body = pub.read_file(client_id_file);
-        let f_json = JSON.parse(f_body);
-
-        let keys = Object.keys(data)
-        for (let i = 0; i < keys.length; i++) {
-            f_json[keys[i]] = data[keys[i]];
-        }
-        pub.write_file(client_id_file, JSON.stringify(f_json));
+        updateJson(client_id_file, value => { Object.assign(value, data); });
         return true;
     }
 

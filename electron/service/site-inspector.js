@@ -3,6 +3,7 @@
 const path = require('path');
 const { BrowserWindow, BrowserView } = require('electron');
 const { pub } = require('../class/public.js');
+const { claimWork, assertTaskOwner, ifTaskIdle } = require('../class/application-data');
 
 const RETENTION_KEY = 'toolbox_history_retention_days';
 const ACTIVE_STATUSES = ['pending', 'running'];
@@ -82,7 +83,7 @@ class SiteInspector {
   cleanupExpired() {
     const days = this.getRetentionDays();
     if (!days) return { days, removed: 0 };
-    const rows = pub.M('site_check_task').where('created_at<?', now() - days * 86400).field('task_id').select();
+    const rows = pub.M('site_check_task').where('created_at<? AND status NOT IN (?,?)', [now() - days * 86400, ...ACTIVE_STATUSES]).field('task_id').select();
     const ids = rows.map(row => Number(row.task_id)).filter(Boolean);
     if (!ids.length) return { days, removed: 0 };
     const marks = ids.map(() => '?').join(',');
@@ -94,7 +95,10 @@ class SiteInspector {
 
   recoverInterrupted() {
     const timestamp = now();
-    const changed = pub.M('site_check_task').where('status IN (?,?)', ACTIVE_STATUSES).update({ status: 'interrupted', ended_at: timestamp, updated_at: timestamp, last_error: '应用退出导致检测中断' });
+    const rows = pub.M('site_check_task').where('status IN (?,?)', ACTIVE_STATUSES).field('task_id').select();
+    let changed = 0;
+    for (const row of rows) changed += ifTaskIdle(`site-${row.task_id}`, () =>
+      pub.M('site_check_task').where('task_id=? AND status IN (?,?)', [row.task_id, ...ACTIVE_STATUSES]).update({ status: 'interrupted', ended_at: timestamp, updated_at: timestamp, last_error: '应用退出导致检测中断' }));
     this.cleanupExpired();
     return changed;
   }
@@ -131,90 +135,99 @@ class SiteInspector {
   }
 
   async openTask(taskId, options) {
-    const profile = options.profile;
-    const inspectorWindow = new BrowserWindow({
-      title: `站点检测 · ${profile.name}`,
-      width: 1500,
-      height: 900,
-      minWidth: 960,
-      minHeight: 620,
-      show: false,
-      webPreferences: { nodeIntegration: true, contextIsolation: false, sandbox: false },
-    });
-    const pageView = new BrowserView({
-      webPreferences: {
-        partition: `site-check-${taskId}`,
-        nodeIntegration: false,
-        contextIsolation: true,
-        sandbox: true,
-        webSecurity: true,
-      },
-    });
-    const context = {
-      taskId,
-      options,
-      inspectorWindow,
-      pageView,
-      activeRequests: new Map(),
-      pendingRecords: [],
-      sequence: 0,
-      requestCount: 0,
-      failedCount: 0,
-      transferSize: 0,
-      decodedSize: 0,
-      startedAtMs: Date.now(),
-      cdpOrigin: null,
-      loadFinished: false,
-      lastActivityMs: Date.now(),
-      ending: false,
-      flushTimer: null,
-      idleTimer: null,
-      timeoutTimer: null,
-      loadingUrl: '',
-      fallbackStarted: false,
-      stage: 'opening_window',
-      discoveryStarted: false,
-      discoveryFinished: false,
-      splitRatio: options.split_ratio,
-      capturedBodyBytes: 0,
-      pendingBodyCaptures: new Set(),
-      requestExtraHeaders: new Map(),
-      responseExtraHeaders: new Map(),
-      finishStatus: '',
-      finishError: '',
-    };
-    this.contexts.set(taskId, context);
-    pub.M('site_check_task').where('task_id=?', taskId).update({ status: 'running', started_at: now(), updated_at: now() });
-
-    this.bindWindow(context);
-    inspectorWindow.webContents.on('did-finish-load', () => this.resizeView(context));
-    inspectorWindow.addBrowserView(pageView);
-    this.resizeView(context);
-    pageView.webContents.setUserAgent(profile.userAgent);
-    await inspectorWindow.loadURL(this.inspectorPage(taskId, options.split_ratio));
-    if (!inspectorWindow.isDestroyed()) {
-      inspectorWindow.show();
-      this.scheduleResize(context, true);
-    }
-
+    const releaseData = claimWork(`site-${taskId}`);
     try {
-      // 每个任务使用唯一的内存 session，本身就是全新的缓存和 Cookie 环境。
-      // Electron 21 在全新 session 上清理存储偶尔会一直不返回，导致页面导航永远不执行。
-      context.stage = 'initializing_view';
-      this.emit(context, { type: 'stage', stage: context.stage });
-      // BrowserView 尚未导航时没有可用的 renderer，直接发送 CDP 命令会一直等待。
-      await withTimeout(pageView.webContents.loadURL('about:blank'), 5000, '页面视图初始化超时');
-      context.stage = 'preparing_capture';
-      this.emit(context, { type: 'stage', stage: context.stage });
-      await withTimeout(this.enableDebugger(context), 5000, '网络采集器启动超时');
+      const profile = options.profile;
+      const inspectorWindow = new BrowserWindow({
+        title: `站点检测 · ${profile.name}`,
+        width: 1500,
+        height: 900,
+        minWidth: 960,
+        minHeight: 620,
+        show: false,
+        webPreferences: { nodeIntegration: true, contextIsolation: false, sandbox: false },
+      });
+      const pageView = new BrowserView({
+        webPreferences: {
+          partition: `site-check-${taskId}`,
+          nodeIntegration: false,
+          contextIsolation: true,
+          sandbox: true,
+          webSecurity: true,
+        },
+      });
+      const context = {
+        releaseData,
+        taskId,
+        options,
+        inspectorWindow,
+        pageView,
+        activeRequests: new Map(),
+        pendingRecords: [],
+        sequence: 0,
+        requestCount: 0,
+        failedCount: 0,
+        transferSize: 0,
+        decodedSize: 0,
+        startedAtMs: Date.now(),
+        cdpOrigin: null,
+        loadFinished: false,
+        lastActivityMs: Date.now(),
+        ending: false,
+        flushTimer: null,
+        idleTimer: null,
+        timeoutTimer: null,
+        loadingUrl: '',
+        fallbackStarted: false,
+        stage: 'opening_window',
+        discoveryStarted: false,
+        discoveryFinished: false,
+        splitRatio: options.split_ratio,
+        capturedBodyBytes: 0,
+        pendingBodyCaptures: new Set(),
+        requestExtraHeaders: new Map(),
+        responseExtraHeaders: new Map(),
+        finishStatus: '',
+        finishError: '',
+      };
+      this.contexts.set(taskId, context);
+      pub.M('site_check_task').where('task_id=?', taskId).update({ status: 'running', started_at: now(), updated_at: now() });
+
+      this.bindWindow(context);
+      inspectorWindow.webContents.on('did-finish-load', () => this.resizeView(context));
+      inspectorWindow.addBrowserView(pageView);
+      this.resizeView(context);
+      pageView.webContents.setUserAgent(profile.userAgent);
+      await inspectorWindow.loadURL(this.inspectorPage(taskId, options.split_ratio));
+      if (!inspectorWindow.isDestroyed()) {
+        inspectorWindow.show();
+        this.scheduleResize(context, true);
+      }
+
+      try {
+        // 每个任务使用唯一的内存 session，本身就是全新的缓存和 Cookie 环境。
+        // Electron 21 在全新 session 上清理存储偶尔会一直不返回，导致页面导航永远不执行。
+        context.stage = 'initializing_view';
+        this.emit(context, { type: 'stage', stage: context.stage });
+        // BrowserView 尚未导航时没有可用的 renderer，直接发送 CDP 命令会一直等待。
+        await withTimeout(pageView.webContents.loadURL('about:blank'), 5000, '页面视图初始化超时');
+        context.stage = 'preparing_capture';
+        this.emit(context, { type: 'stage', stage: context.stage });
+        await withTimeout(this.enableDebugger(context), 5000, '网络采集器启动超时');
+      } catch (error) {
+        this.finish(context, 'failed', String(error && error.message || error));
+        throw error;
+      }
+      context.idleTimer = setInterval(() => this.checkCompletion(context), 500);
+      context.timeoutTimer = setTimeout(() => this.finish(context, 'completed'), options.timeout_seconds * 1000);
+      context.stage = 'loading_page';
+      this.loadPage(context, options.url);
     } catch (error) {
-      this.finish(context, 'failed', String(error && error.message || error));
+      const context = this.contexts.get(taskId);
+      if (context && !context.ending) this.finish(context, 'failed', String(error.message || error));
+      if (!context) releaseData();
       throw error;
     }
-    context.idleTimer = setInterval(() => this.checkCompletion(context), 500);
-    context.timeoutTimer = setTimeout(() => this.finish(context, 'completed'), options.timeout_seconds * 1000);
-    context.stage = 'loading_page';
-    this.loadPage(context, options.url);
   }
 
   loadPage(context, url) {
@@ -905,6 +918,7 @@ class SiteInspector {
       if (context.finishStatus !== 'completed' && webContents && !webContents.isDestroyed() && webContents.debugger.isAttached()) webContents.debugger.detach();
     } catch (_) {}
     this.persistTask(context, context.finishStatus || 'stopped', context.finishError || '');
+    context.releaseData();
     this.emit(context, { type: 'finished', status: context.finishStatus || 'stopped', error: context.finishError || '', summary: this.summary(context) });
     if (context.finishStatus !== 'completed') this.contexts.delete(context.taskId);
     if (context.finishStatus !== 'completed' && context.inspectorWindow && !context.inspectorWindow.isDestroyed()) {
@@ -1002,12 +1016,14 @@ class SiteInspector {
   }
 
   stop(taskId) {
+    assertTaskOwner(`site-${Number(taskId)}`);
     const context = this.contexts.get(Number(taskId));
     if (context) this.finish(context, 'stopped', '用户停止检测');
     return this.getTask(taskId);
   }
 
   deleteTask(taskId) {
+    assertTaskOwner(`site-${Number(taskId)}`);
     const id = Number(taskId);
     const context = this.contexts.get(id);
     if (context) {

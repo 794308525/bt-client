@@ -15,7 +15,7 @@ module.exports = async () => {
   // 示例功能模块，可选择性使用和修改
   Addon.get('tray').create();
   Addon.get('security').create();
-  if (!process.mas) {
+  if (!process.mas && require('electron').app.isPackaged) {
     Addon.get('autoUpdater').create();
   }
 

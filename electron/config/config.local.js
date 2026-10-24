@@ -23,7 +23,7 @@ module.exports = appInfo => {
 	 * 主窗口
 	 */
 	config.windowsOption = {
-		title: '寰宇运维',
+		title: '寰宇运维（开发版）',
 		width: 1662,
 		height: 900,
 		minWidth: 900,

@@ -9,6 +9,7 @@ const net = require('net');
 const { SocksProxyAgent } = require("socks-proxy-agent");
 const NodeCache = require('node-cache');
 const Cache = new NodeCache({ stdTTL: 360, checkperiod: 7200 });
+const { processPaths, readJson, updateJson } = require('./application-data');
 
 
 class Public {
@@ -35,13 +36,10 @@ class Public {
         if(!key) return;
         if(value === undefined) return this.config_get(key);
 
-        let config_file = path.resolve(this.get_data_path() , 'config.json');
-        let config = {};
-        if(fs.existsSync(config_file)){
-            config = JSON.parse(this.read_file(config_file));
-        }
-        config[key] = value;
-        this.write_file(config_file,JSON.stringify(config));
+        const config_file = key === 'window' && processPaths()
+            ? path.join(processPaths().runtimeDir, 'window-settings.json')
+            : path.resolve(this.get_data_path(), 'config.json');
+        updateJson(config_file, config => { config[key] = value; });
     }
 
     /**
@@ -60,11 +58,13 @@ class Public {
      */
     config_get(key){
         let config_file = path.resolve(this.get_data_path() , 'config.json');
-        if(!fs.existsSync(config_file)) {
-            let default_config = {"max_common_use":10}
-            this.write_file(config_file,JSON.stringify(default_config));
+        if(!fs.existsSync(config_file)) updateJson(config_file, config => {
+            if (config.max_common_use === undefined) config.max_common_use = 10;
+        });
+        let config = readJson(config_file);
+        if (key === 'window' && processPaths()) {
+            return readJson(path.join(processPaths().runtimeDir, 'window-settings.json')).window;
         }
-        let config = JSON.parse(this.read_file(config_file));
         if(key === undefined) return config;
         return config[key];
     }
@@ -351,7 +351,7 @@ class Public {
      * @example get_root_path()
      */
     get_root_path(){
-        return Ps.getRootDir()
+        return processPaths()?.runtimeDir || Ps.getRootDir()
     }
     
     /**
@@ -360,7 +360,7 @@ class Public {
      */
     get_data_path(){
         // 获取用户数据目录
-        let data_path = path.resolve(this.get_root_path(),'data');
+        let data_path = processPaths()?.dataDir || path.resolve(this.get_root_path(),'data');
 
         // 如果不存在则创建
         if (!fs.existsSync(data_path)) {
@@ -1191,6 +1191,9 @@ class Public {
     // 获取后端服务端口
     get_golang_service_port(){
         let filename = this.get_root_path() + "/run/port.pl";
+        if (processPaths() && !fs.existsSync(filename)) {
+            throw new Error('当前版本的批量任务服务尚未就绪，请在已启动该服务的版本中操作');
+        }
         let defaultPort = 61415;
         if (fs.existsSync(filename)) {
             let data = fs.readFileSync(filename);

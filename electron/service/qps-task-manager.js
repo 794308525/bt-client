@@ -2,6 +2,7 @@
 
 const { Worker } = require('worker_threads');
 const { pub } = require('../class/public.js');
+const { claimWork, assertTaskOwner, ifTaskIdle } = require('../class/application-data');
 
 const ACTIVE_STATUSES = ['pending', 'running'];
 const RETENTION_KEY = 'toolbox_history_retention_days';
@@ -50,7 +51,7 @@ class QpsTaskManager {
   cleanupExpired() {
     const days = this.getRetentionDays();
     if (!days) return { days, removed: 0 };
-    const rows = pub.M('qps_test_task').where('created_at<?', now() - days * 86400).field('task_id').select();
+    const rows = pub.M('qps_test_task').where('created_at<? AND status NOT IN (?,?)', [now() - days * 86400, ...ACTIVE_STATUSES]).field('task_id').select();
     const ids = rows.map(row => Number(row.task_id)).filter(Boolean);
     if (!ids.length) return { days, removed: 0 };
     const marks = ids.map(() => '?').join(',');
@@ -62,7 +63,10 @@ class QpsTaskManager {
 
   recoverInterrupted() {
     const timestamp = now();
-    const changed = pub.M('qps_test_task').where('status IN (?,?)', ACTIVE_STATUSES).update({ status: 'interrupted', ended_at: timestamp, updated_at: timestamp, last_error: '应用退出导致任务中断' });
+    const rows = pub.M('qps_test_task').where('status IN (?,?)', ACTIVE_STATUSES).field('task_id').select();
+    let changed = 0;
+    for (const row of rows) changed += ifTaskIdle(`qps-${row.task_id}`, () =>
+      pub.M('qps_test_task').where('task_id=? AND status IN (?,?)', [row.task_id, ...ACTIVE_STATUSES]).update({ status: 'interrupted', ended_at: timestamp, updated_at: timestamp, last_error: '应用退出导致任务中断' }));
     this.cleanupExpired();
     return changed;
   }
@@ -115,67 +119,86 @@ class QpsTaskManager {
   }
 
   createTask(input) {
-    const config = this.normalizeConfig(input);
-    const activeRuntimes = Array.from(this.runtimes.values());
-    if (config.mode === 'extreme' && activeRuntimes.length) throw new Error('极限模式需独占本机发压器，请先停止其他 QPS 任务');
-    if (activeRuntimes.some(runtime => runtime.task.mode === 'extreme')) throw new Error('当前有极限模式任务运行，请等待其结束或先停止');
-    const timestamp = now();
-    const taskId = pub.M('qps_test_task').insert({ ...config, status: 'pending', created_at: timestamp, updated_at: timestamp });
-    if (!taskId) throw new Error('创建 QPS 测试任务失败');
-    this.startTask(taskId);
-    return this.getTask(taskId);
+    const releaseEngine = claimWork('qps-engine');
+    try {
+      const config = this.normalizeConfig(input);
+      const activeRuntimes = Array.from(this.runtimes.values());
+      if (config.mode === 'extreme' && activeRuntimes.length) throw new Error('极限模式需独占本机发压器，请先停止其他 QPS 任务');
+      if (activeRuntimes.some(runtime => runtime.task.mode === 'extreme')) throw new Error('当前有极限模式任务运行，请等待其结束或先停止');
+      const timestamp = now();
+      const taskId = pub.M('qps_test_task').insert({ ...config, status: 'pending', created_at: timestamp, updated_at: timestamp });
+      if (!taskId) throw new Error('创建 QPS 测试任务失败');
+      this.startTask(taskId);
+      return this.getTask(taskId);
+    } finally { releaseEngine(); }
   }
 
   startTask(taskId) {
     const id = Number(taskId);
     if (this.runtimes.has(id)) return;
-    const task = pub.M('qps_test_task').where('task_id=?', id).find();
-    if (!task) throw new Error('QPS 测试任务不存在');
-    const timestamp = now();
-    pub.M('qps_test_task').where('task_id=?', id).update({ status: 'running', started_at: timestamp, updated_at: timestamp, last_error: '', limit_kind: '', limit_reason: '' });
-    const runtime = {
-      task: { ...task, task_id: id, started_at: timestamp }, startedAtMs: Date.now(), timer: null, sampleTimer: null,
-      finishTimer: null, drainTimer: null, finishDeadlineMs: 0, finishStatus: '', active: 0, scheduled: 0, issued: 0,
-      completed: 0, fixedScheduled: 0, dropped: 0, total: accumulator(), statusCodes: {}, errors: {},
-      sample: { scheduledBase: 0, issuedBase: 0, stats: accumulator() }, pendingRequests: new Set(), ending: false,
-      finalized: false, discardResults: false, stage: null, stageNo: 0, lower: 0, upper: 0, finalStable: 0,
-      passedTargets: [], confirmAttempts: 0, lastLimitKind: '', lastLimitReason: '',
-      worker: null, workerDone: false, eventLoopLagMs: 0,
-    };
-    this.runtimes.set(id, runtime);
-    runtime.worker = new Worker(require.resolve('./qps-load-worker.js'), {
-      workerData: {
-        url: String(task.url), method: String(task.method || 'GET'), requestHeaders: json(task.request_headers, {}),
-        requestBody: String(task.request_body || ''), concurrency: Number(task.concurrency) || 1,
-        mode: String(task.mode || 'fixed'), targetQps: Number(task.target_qps) || 1,
-        durationSeconds: Number(task.duration_seconds) || 1,
-        timeoutMs: Number(task.timeout_ms) || 10000, keepAlive: Number(task.keep_alive) === 1,
-        followRedirects: Number(task.follow_redirects) === 1, ignoreTlsErrors: Number(task.ignore_tls_errors) === 1,
-      },
-    });
-    runtime.worker.on('message', message => this.handleWorkerMessage(runtime, message));
-    runtime.worker.on('error', error => {
-      if (runtime.finalized) return;
-      runtime.workerDone = true;
-      addError(runtime.errors, error);
-      if (runtime.ending) this.maybeFinalize(runtime);
-      else this.requestFinish(runtime, 'stopped', false);
-    });
-    runtime.worker.on('exit', code => {
-      if (runtime.finalized) return;
-      runtime.workerDone = true;
-      if (runtime.ending) this.maybeFinalize(runtime);
-      else if (code !== 0) this.requestFinish(runtime, 'stopped', false);
-    });
-    // 固定 QPS 的调度完全在发压 Worker 内完成，主进程只跟踪状态；极限模式才需要主进程驱动分档判定。
-    if (task.mode === 'extreme') runtime.timer = setInterval(() => this.pump(runtime), PUMP_INTERVAL_MS);
-    const duration = task.mode === 'extreme' ? EXTREME_MAX_SECONDS : Math.max(1, Number(task.duration_seconds));
-    runtime.finishTimer = setTimeout(() => {
-      if (task.mode === 'extreme') this.finishWithLimit(runtime, 'engine_guard', `已达极限模式 ${EXTREME_MAX_SECONDS / 60} 分钟总时长保护，仅保留当前已验证下界`);
-      else this.requestFinish(runtime, 'completed', true);
-    }, duration * 1000);
-    if (task.mode === 'extreme') this.startExtremeStage(runtime, Number(task.extreme_initial_qps) || 10, 'probe');
-    runtime.worker.postMessage({ type: 'start' });
+    const releaseEngine = claimWork('qps-engine');
+    let releaseTask;
+    const releaseData = () => { if (releaseTask) releaseTask(); releaseEngine(); };
+    try {
+      releaseTask = claimWork(`qps-${id}`);
+      const task = pub.M('qps_test_task').where('task_id=?', id).find();
+      if (!task) throw new Error('QPS 测试任务不存在');
+      const timestamp = now();
+      pub.M('qps_test_task').where('task_id=?', id).update({ status: 'running', started_at: timestamp, updated_at: timestamp, last_error: '', limit_kind: '', limit_reason: '' });
+      const runtime = {
+        releaseData, task: { ...task, task_id: id, started_at: timestamp }, startedAtMs: Date.now(), timer: null, sampleTimer: null,
+        finishTimer: null, drainTimer: null, finishDeadlineMs: 0, finishStatus: '', active: 0, scheduled: 0, issued: 0,
+        completed: 0, fixedScheduled: 0, dropped: 0, total: accumulator(), statusCodes: {}, errors: {},
+        sample: { scheduledBase: 0, issuedBase: 0, stats: accumulator() }, pendingRequests: new Set(), ending: false,
+        finalized: false, discardResults: false, stage: null, stageNo: 0, lower: 0, upper: 0, finalStable: 0,
+        passedTargets: [], confirmAttempts: 0, lastLimitKind: '', lastLimitReason: '',
+        worker: null, workerDone: false, eventLoopLagMs: 0,
+      };
+      this.runtimes.set(id, runtime);
+      runtime.worker = new Worker(require.resolve('./qps-load-worker.js'), {
+        workerData: {
+          url: String(task.url), method: String(task.method || 'GET'), requestHeaders: json(task.request_headers, {}),
+          requestBody: String(task.request_body || ''), concurrency: Number(task.concurrency) || 1,
+          mode: String(task.mode || 'fixed'), targetQps: Number(task.target_qps) || 1,
+          durationSeconds: Number(task.duration_seconds) || 1,
+          timeoutMs: Number(task.timeout_ms) || 10000, keepAlive: Number(task.keep_alive) === 1,
+          followRedirects: Number(task.follow_redirects) === 1, ignoreTlsErrors: Number(task.ignore_tls_errors) === 1,
+        },
+      });
+      runtime.worker.on('message', message => this.handleWorkerMessage(runtime, message));
+      runtime.worker.on('error', error => {
+        if (runtime.finalized) return;
+        runtime.workerDone = true;
+        addError(runtime.errors, error);
+        if (runtime.ending) this.maybeFinalize(runtime);
+        else this.requestFinish(runtime, 'stopped', false);
+      });
+      runtime.worker.on('exit', code => {
+        if (runtime.finalized) return;
+        runtime.workerDone = true;
+        if (runtime.ending) this.maybeFinalize(runtime);
+        else if (code !== 0) this.requestFinish(runtime, 'stopped', false);
+      });
+      // 固定 QPS 的调度完全在发压 Worker 内完成，主进程只跟踪状态；极限模式才需要主进程驱动分档判定。
+      if (task.mode === 'extreme') runtime.timer = setInterval(() => this.pump(runtime), PUMP_INTERVAL_MS);
+      const duration = task.mode === 'extreme' ? EXTREME_MAX_SECONDS : Math.max(1, Number(task.duration_seconds));
+      runtime.finishTimer = setTimeout(() => {
+        if (task.mode === 'extreme') this.finishWithLimit(runtime, 'engine_guard', `已达极限模式 ${EXTREME_MAX_SECONDS / 60} 分钟总时长保护，仅保留当前已验证下界`);
+        else this.requestFinish(runtime, 'completed', true);
+      }, duration * 1000);
+      if (task.mode === 'extreme') this.startExtremeStage(runtime, Number(task.extreme_initial_qps) || 10, 'probe');
+      runtime.worker.postMessage({ type: 'start' });
+    } catch (error) {
+      const runtime = this.runtimes.get(id);
+      if (runtime) {
+        if (runtime.worker) runtime.worker.terminate();
+        clearInterval(runtime.timer);
+        clearTimeout(runtime.finishTimer);
+        this.runtimes.delete(id);
+      }
+      releaseData();
+      throw error;
+    }
   }
 
   handleWorkerMessage(runtime, message) {
@@ -602,6 +625,7 @@ class QpsTaskManager {
       runtime.finalized = true;
     }
     this.runtimes.delete(runtime.task.task_id);
+    runtime.releaseData();
     if (runtime.resolveFinish) runtime.resolveFinish();
   }
 
@@ -626,6 +650,7 @@ class QpsTaskManager {
   }
 
   async stopTask(taskId) {
+    assertTaskOwner(`qps-${Number(taskId)}`);
     const runtime = this.runtimes.get(Number(taskId));
     if (runtime) {
       await this.requestFinish(runtime, 'stopped', false);
@@ -685,6 +710,7 @@ class QpsTaskManager {
   }
 
   deleteTask(taskId) {
+    assertTaskOwner(`qps-${Number(taskId)}`);
     const id = Number(taskId);
     const runtime = this.runtimes.get(id);
     if (runtime) {

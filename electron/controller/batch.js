@@ -38,7 +38,9 @@ class BatchController extends Controller {
 
     // 发送请求到golang服务
     send_to_golang(path,args,callback){
-        let port = pub.get_golang_service_port();
+        let port;
+        try { port = pub.get_golang_service_port(); }
+        catch (error) { callback({ status: false, msg: error.message }); return; }
         let url = "http://127.0.0.1:" + port +  path;
         pub.HttpPost(url,args,function(data){
             let jsonBody = JSON.parse(data.body);

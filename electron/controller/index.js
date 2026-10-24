@@ -4,6 +4,7 @@ const { pub } = require("../class/public.js");
 const path = require('path');
 const Services = require('ee-core/services');
 const autoUpdater = process.mas ? null : require('electron-updater').autoUpdater;
+const { exclusive } = require('../class/application-data');
 
 
 class IndexController extends Controller {
@@ -126,7 +127,7 @@ class IndexController extends Controller {
             args.data = {
                 password: pub.random_string(16)
             }
-            this.set_password(args)
+            await this.set_password(args)
             if (pub.C('password')){
                 return pub.send_success_msg(event,channel,pub.lang('已设置管理密码'))
             }
@@ -144,58 +145,60 @@ class IndexController extends Controller {
      * @returns {Object} 返回结果
      */
     async set_password(args,event) {
-        let channel = args.channel;
-        let password = args.data.password;
-        if(!password){
-            return pub.send_error_msg(event,channel,pub.lang('密码不能为空'))
-        }
-        if(password.length < 8){
-            return pub.send_error_msg(event,channel,pub.lang('密码长度不能小于8位'))
-        }
-        let salt = pub.C('password_salt')
-        if(!salt){
-            salt = pub.random_string(16)
-            pub.C('password_salt',salt)
-        }
-        let password_hash = pub.md5(pub.md5(password)+salt)
-        pub.C('password',password_hash)
+      try { return await exclusive(async () => {
+            let channel = args.channel;
+            let password = args.data.password;
+            if(!password){
+                return pub.send_error_msg(event,channel,pub.lang('密码不能为空'))
+            }
+            if(password.length < 8){
+                return pub.send_error_msg(event,channel,pub.lang('密码长度不能小于8位'))
+            }
+            let salt = pub.C('password_salt')
+            if(!salt){
+                salt = pub.random_string(16)
+                pub.C('password_salt',salt)
+            }
+            let password_hash = pub.md5(pub.md5(password)+salt)
+            pub.C('password',password_hash)
 
-        // 解密所有信息
-        pub.M('panel_info').decryptAll();
-        pub.M('ssh_info').decryptAll();
-        pub.M('proxy_info').decryptAll();
-        pub.M('aliyun_account').decryptAll();
-        pub.M('aliyun_ssh_credential').decryptAll();
-        pub.M('tencent_ssh_credential').decryptAll();
-        pub.M('tencent_account').decryptAll();
-        pub.M('cloudflare_account').decryptAll();
-        pub.M('ssl_channel').decryptAll();
-        pub.M('site_check_request_detail').decryptAll();
-        pub.M('qps_test_task').decryptAll();
+            // 解密所有信息
+            pub.M('panel_info').decryptAll();
+            pub.M('ssh_info').decryptAll();
+            pub.M('proxy_info').decryptAll();
+            pub.M('aliyun_account').decryptAll();
+            pub.M('aliyun_ssh_credential').decryptAll();
+            pub.M('tencent_ssh_credential').decryptAll();
+            pub.M('tencent_account').decryptAll();
+            pub.M('cloudflare_account').decryptAll();
+            pub.M('ssl_channel').decryptAll();
+            pub.M('site_check_request_detail').decryptAll();
+            pub.M('qps_test_task').decryptAll();
 
-        // 保存密码加密方式
-        if(!pub.C('init_password') || pub.C('not_password') === true){
-            pub.C('init_password',pub.aes_default_encrypt(password))
-            pub.C('not_password',true);
-            pub.C('password_hash',password_hash)
-        }
+            // 保存密码加密方式
+            if(!pub.C('init_password') || pub.C('not_password') === true){
+                pub.C('init_password',pub.aes_default_encrypt(password))
+                pub.C('not_password',true);
+                pub.C('password_hash',password_hash)
+            }
 
-        global.password_hash = password_hash;
+            global.password_hash = password_hash;
 
-        // 重新加密所有信息
-        pub.M('panel_info').encryptAll();
-        pub.M('ssh_info').encryptAll();
-        pub.M('proxy_info').encryptAll();
-        pub.M('aliyun_account').encryptAll();
-        pub.M('aliyun_ssh_credential').encryptAll();
-        pub.M('tencent_ssh_credential').encryptAll();
-        pub.M('tencent_account').encryptAll();
-        pub.M('cloudflare_account').encryptAll();
-        pub.M('ssl_channel').encryptAll();
-        pub.M('site_check_request_detail').encryptAll();
-        pub.M('qps_test_task').encryptAll();
+            // 重新加密所有信息
+            pub.M('panel_info').encryptAll();
+            pub.M('ssh_info').encryptAll();
+            pub.M('proxy_info').encryptAll();
+            pub.M('aliyun_account').encryptAll();
+            pub.M('aliyun_ssh_credential').encryptAll();
+            pub.M('tencent_ssh_credential').encryptAll();
+            pub.M('tencent_account').encryptAll();
+            pub.M('cloudflare_account').encryptAll();
+            pub.M('ssl_channel').encryptAll();
+            pub.M('site_check_request_detail').encryptAll();
+            pub.M('qps_test_task').encryptAll();
         
-        return pub.send_success_msg(event,channel,pub.lang('管理密码设置成功'))
+            return pub.send_success_msg(event,channel,pub.lang('管理密码设置成功'))
+      }); } catch (error) { return pub.send_error_msg(event, args.channel, error.message); }
     }
 
 
@@ -205,33 +208,35 @@ class IndexController extends Controller {
      * @param {Object} event 事件
      */
     async not_password(args,event) {
-        let channel = args.channel;
-        let password = args.data.password;
-        let not_password = args.data.not_password
+      try { return await exclusive(async () => {
+            let channel = args.channel;
+            let password = args.data.password;
+            let not_password = args.data.not_password
 
 
-        if(!password){
-            return pub.send_error_msg(event,channel,pub.lang('密码不能为空'))
-        }
-        // 验证密码
-        let salt = pub.C('password_salt');
-        let password_hash = pub.md5(pub.md5(password)+salt)
-        let password_db = pub.C('password');
-        if(password_hash != password_db){
-            return pub.send_error_msg(event,channel,pub.lang('密码错误'))
-        }
+            if(!password){
+                return pub.send_error_msg(event,channel,pub.lang('密码不能为空'))
+            }
+            // 验证密码
+            let salt = pub.C('password_salt');
+            let password_hash = pub.md5(pub.md5(password)+salt)
+            let password_db = pub.C('password');
+            if(password_hash != password_db){
+                return pub.send_error_msg(event,channel,pub.lang('密码错误'))
+            }
 
-        if(!not_password){
-            // 取消免密码登录
-            pub.C('not_password',false);
-            pub.C('password_hash','');
-        }else{
-            // 设置免密码登录
-            pub.C('password_hash',password_hash);
-            pub.C('not_password',true);
-        }
+            if(!not_password){
+                // 取消免密码登录
+                pub.C('not_password',false);
+                pub.C('password_hash','');
+            }else{
+                // 设置免密码登录
+                pub.C('password_hash',password_hash);
+                pub.C('not_password',true);
+            }
 
-        return pub.send_success_msg(event,channel,pub.lang('设置成功'))
+            return pub.send_success_msg(event,channel,pub.lang('设置成功'))
+      }); } catch (error) { return pub.send_error_msg(event, args.channel, error.message); }
     }
 
     /**
@@ -340,7 +345,11 @@ class IndexController extends Controller {
         if(key === 'sync_cloud' || key === 'sync_password'){
             return pub.send_error_msg(event,channel,pub.lang('宝塔账号数据同步功能已停用'));
         }
-        pub.config_set(key,value);
+        if (['password', 'password_salt', 'password_hash', 'not_password', 'init_password'].includes(key)) {
+            return pub.send_error_msg(event,channel,pub.lang('请通过管理密码入口修改认证设置'));
+        }
+        try { pub.config_set(key,value); }
+        catch (error) { return pub.send_error_msg(event,channel,error.message); }
         return pub.send_success_msg(event,channel,pub.lang('设置成功'))
     }
 
