@@ -99,6 +99,7 @@ module.exports = appInfo => {
 		enable: false,
 		https: {
 			enable: false,
+			// 启用 HTTPS 时，请配置本机生成的私钥和证书路径。
 			key: '',
 			cert: '',
 		},

@@ -8,5 +8,6 @@
 /public/dist/
 /public/electron/
 /run/
+/苹果证书/
 /public/ssl/*.key
 /public/ssl/*.pem

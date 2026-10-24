@@ -12,7 +12,15 @@
     "!run/",
     "!logs/",
     "!data/",
-    "!electron/"
+    "!electron/",
+    "!out/",
+    "!苹果证书/",
+    "!截图/",
+    "!design/",
+    "!exports/",
+    "!**/*.{p12,pfx,provisionprofile,mobileprovision}",
+    "!**/node_gyp_bins{,/**/*}",
+    "!**/better-sqlite3/build/Release/test_extension.node"
   ],
   "extraResources": {
     "from": "build/extraResources/",
