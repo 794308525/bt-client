@@ -758,6 +758,9 @@ const routes = {
 			method: 'ipc',
 			path: 'controller.aliyun.esa_certificate_list',
 		},
+		esa_cache_quota: { title: '获取 ESA 刷新额度', method: 'ipc', path: 'controller.aliyun.esa_cache_quota' },
+		esa_cache_purge: { title: '批量刷新 ESA 缓存', method: 'ipc', path: 'controller.aliyun.esa_cache_purge' },
+		esa_cache_tasks: { title: '获取 ESA 刷新任务', method: 'ipc', path: 'controller.aliyun.esa_cache_tasks' },
 		esa_traffic_analytics: {
 			title: '获取阿里云 ESA 流量分析',
 			method: 'ipc',

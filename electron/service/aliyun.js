@@ -2863,6 +2863,62 @@ class AliyunService {
     return { certificate_id: String(body.id || ''), requestId: body.requestId || '' };
   }
 
+  normalizeEsaPurgeType(type) {
+    if (!['file', 'directory'].includes(type)) throw new AliyunServiceError('请选择地址或目录刷新', 'InvalidPurgeType');
+    return type;
+  }
+
+  async getEsaPurgeQuota(accountId, data = {}) {
+    const { esa } = this.createClients(this.getAccount(accountId));
+    const type = this.normalizeEsaPurgeType(data.type);
+    const body = getBody(await this.request(() => esa.getPurgeQuota(new Esa.GetPurgeQuotaRequest({ siteId: this.normalizeEsaSiteId(data.site_id), type })), 'esa'));
+    const number = value => /^\d+$/.test(String(value)) && Number.isSafeInteger(Number(value)) ? Number(value) : null;
+    const quota = number(body.quota), used = number(body.usage), quota30 = number(body.quota30Day), used30 = number(body.usage30Day);
+    return { quota, used, remaining: quota !== null && used !== null ? Math.max(0, quota - used) : null,
+      quota_30_day: quota30, used_30_day: used30, remaining_30_day: quota30 > 0 && used30 !== null ? Math.max(0, quota30 - used30) : null, requestId: body.requestId || '' };
+  }
+
+  async purgeEsaCaches(accountId, data = {}) {
+    const { esa } = this.createClients(this.getAccount(accountId));
+    const siteId = this.normalizeEsaSiteId(data.site_id);
+    const type = this.normalizeEsaPurgeType(data.type);
+    const text = String(data.content || '').trim();
+    if (text.length > 2 * 1024 * 1024) throw new AliyunServiceError('刷新内容过长，请减少地址数量', 'TooManyPurgeEntries');
+    const entries = [...new Set(text.split(/\r?\n/).map(item => item.trim()).filter(Boolean))];
+    const limit = type === 'file' ? 1000 : 100;
+    if (!entries.length || entries.length > limit) throw new AliyunServiceError(`请填写 1–${limit} 条${type === 'file' ? '地址' : '目录'}，每行一条`, 'InvalidPurgeEntries');
+    const site = getBody(await this.request(() => esa.getSite(new Esa.GetSiteRequest({ siteId })), 'esa')).siteModel || {};
+    const siteName = String(site.siteName || '').toLowerCase();
+    if (!siteName) throw new AliyunServiceError('未取得站点域名，请刷新后重试', 'MissingSiteName');
+    const hosts = new Set();
+    entries.forEach((entry, index) => {
+      let url;
+      try { url = new URL(entry); } catch { throw new AliyunServiceError(`第 ${index + 1} 行不是有效 URL`, 'InvalidPurgeUrl'); }
+      if (!/^https?:\/\//i.test(entry) || !['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash || /[\s*\\]/.test(entry)) throw new AliyunServiceError(`第 ${index + 1} 行请填写不含通配符、凭据或片段的完整 HTTP/HTTPS 地址`, 'InvalidPurgeUrl');
+      const host = url.hostname.toLowerCase();
+      if (host !== siteName && !host.endsWith(`.${siteName}`)) throw new AliyunServiceError(`第 ${index + 1} 行不属于当前 ESA 站点`, 'PurgeDomainMismatch');
+      if (type === 'directory' && (!entry.endsWith('/') || url.search)) throw new AliyunServiceError(`第 ${index + 1} 行目录须以 / 结尾且不能包含查询参数`, 'InvalidPurgeDirectory');
+      hosts.add(host);
+    });
+    if (hosts.size > 10) throw new AliyunServiceError('单次刷新最多包含 10 个不同域名', 'TooManyPurgeDomains');
+    const quota = await this.getEsaPurgeQuota(accountId, data);
+    if (quota.remaining !== null && entries.length > quota.remaining || quota.remaining_30_day !== null && entries.length > quota.remaining_30_day) throw new AliyunServiceError('剩余刷新额度不足，请减少数量或调整套餐', 'PurgeQuotaExceeded');
+    const body = getBody(await this.request(() => esa.purgeCaches(new Esa.PurgeCachesRequest({ siteId, type,
+      content: new Esa.PurgeCachesRequestContent(type === 'file' ? { files: entries } : { directories: entries }), force: false,
+    })), 'esa'));
+    return { task_id: String(body.taskId || ''), count: entries.length, requestId: body.requestId || '' };
+  }
+
+  async listEsaPurgeTasks(accountId, data = {}) {
+    const { esa } = this.createClients(this.getAccount(accountId));
+    const type = this.normalizeEsaPurgeType(data.type);
+    const body = getBody(await this.request(() => esa.describePurgeTasks(new Esa.DescribePurgeTasksRequest({
+      siteId: this.normalizeEsaSiteId(data.site_id), type, pageNumber: Math.min(100000, Math.max(1, Number(data.page) || 1)), pageSize: 20,
+      startTime: new Date(Date.now() - 48 * 3600000).toISOString(), endTime: new Date().toISOString(),
+    })), 'esa'));
+    return { data: (body.tasks || []).map((item, index) => ({ row_key: `${item.taskId}:${index}`, task_id: String(item.taskId || ''), content: item.content || '', status: item.status || '', progress: item.process || '', description: item.description || '', create_time: item.createTime || '' })), total: Number(body.totalCount || 0), requestId: body.requestId || '' };
+  }
+
   async getEsaUrlRankings(accountId, siteId, host, range, onProgress) {
     const startedAt = Date.now();
     const reportProgress = progress => {

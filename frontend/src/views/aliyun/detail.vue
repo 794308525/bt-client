@@ -349,6 +349,10 @@
 									<TrafficAnalytics v-if="selectedEsaSite" :account-id="accountId" product="esa" :site-id="selectedEsaSite.site_id" :site-name="selectedEsaSite.site_name" />
 								</el-tab-pane>
 
+								<el-tab-pane :label="pub.lang('缓存刷新')" name="cache">
+									<EsaCache v-if="activeTab === 'esa' && esaDetailTab === 'cache' && selectedEsaSite" :key="selectedEsaSite.site_id" :account-id="accountId" :site-id="selectedEsaSite.site_id" :site-name="selectedEsaSite.site_name" />
+								</el-tab-pane>
+
 								<el-tab-pane :label="pub.lang('源站信息')" name="origins">
 									<div class="esa-section-heading">
 										<div><h4>{{ pub.lang('源站池') }}</h4><p>{{ pub.lang('查看当前站点实际回源目标与负载权重') }}</p></div>
@@ -933,6 +937,7 @@ import ServerTrafficDetail from './components/server-traffic.vue'
 import ServerAllowance from './components/server-allowance.vue'
 import RecordCheckDialog from './components/record-check.vue'
 import ServerConnect from './components/server-connect.vue'
+import EsaCache from './components/esa-cache.vue'
 import { formatServerTraffic, formatTrafficTime, serverTrafficKey, type ServerTraffic } from '@utils/server-traffic'
 
 defineOptions({ name: 'AliyunDetail' })

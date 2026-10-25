@@ -18,7 +18,7 @@
 			<div class="about-features">
 				<article class="about-feature">
 					<h3>{{ pub.lang('阿里云资源管理') }}</h3>
-					<p>{{ pub.lang('管理服务器、ESA/CDN、OSS 与域名解析，支持监控查看和 SSH 连接。') }}</p>
+					<p>{{ pub.lang('管理服务器、ESA/CDN、OSS 与域名解析，支持监控查看、ESA 缓存刷新和 SSH 连接。') }}</p>
 				</article>
 				<article class="about-feature">
 					<h3>{{ pub.lang('腾讯云资源管理') }}</h3>

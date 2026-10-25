@@ -452,6 +452,21 @@ class AliyunController extends Controller {
     } catch (error) { return sendAliyunError(event, args.channel, error); }
   }
 
+  async esa_cache_quota(args, event) {
+    try { return pub.send_success(event, args.channel, await aliyunService.getEsaPurgeQuota(args.data.account_id, args.data)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async esa_cache_purge(args, event) {
+    try { return pub.send_success(event, args.channel, await aliyunService.purgeEsaCaches(args.data.account_id, args.data)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async esa_cache_tasks(args, event) {
+    try { return pub.send_success(event, args.channel, await aliyunService.listEsaPurgeTasks(args.data.account_id, args.data)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
   async esa_traffic_analytics(args, event) {
     try {
       const data = await aliyunService.getEsaTrafficAnalytics(args.data.account_id, args.data);
