@@ -686,6 +686,11 @@ const routes = {
 			method: 'ipc',
 			path: 'controller.aliyun.server_allowance',
 		},
+		server_traffic_trend: {
+			title: '获取阿里云服务器流量趋势',
+			method: 'ipc',
+			path: 'controller.aliyun.server_traffic_trend',
+		},
 		ssh_prepare: { title: '准备阿里云 SSH 连接', method: 'ipc', path: 'controller.aliyun.ssh_prepare' },
 		ssh_connect: { title: '建立阿里云 SSH 连接', method: 'ipc', path: 'controller.aliyun.ssh_connect' },
 		ssh_diagnose: { title: '检查阿里云 SSH 安全组', method: 'ipc', path: 'controller.aliyun.ssh_diagnose' },

@@ -3,6 +3,8 @@ export interface TrafficServer {
 	region_id: string
 	instance_id: string
 	name: string
+	region_name?: string
+	eip_id?: string
 }
 
 export interface TrafficDay {
@@ -32,6 +34,40 @@ export interface TrafficMonth {
 	out_bytes: number | null
 	partial: boolean
 	data_time: number
+}
+
+export interface TrafficBucket {
+	start: number
+	end: number
+	in_bytes: number | null
+	out_bytes: number | null
+	partial: boolean
+	covered: number
+	pending: boolean
+	data_time: number
+}
+
+export interface TrafficTrendView {
+	range: { start: number; end: number }
+	points: TrafficBucket[]
+	days: TrafficBucket[]
+	summary: { in_bytes: number | null; out_bytes: number | null; coverage: number; partial: boolean }
+	data_time: number
+}
+
+export interface ServerTrafficTrend extends TrafficTrendView {
+	query_range: { start: number; end: number }
+	interval: number
+	sampling_period: number
+	comparison: TrafficTrendView | null
+	aligned: boolean
+	comparable: boolean
+	errors: Array<{ comparison: boolean; direction: 'in' | 'out'; message: string; code: string; request_id: string }>
+	notes: string[]
+	source: 'ecs' | 'eip' | 'swas'
+	cached: boolean
+	update_time: number
+	capabilities: { periods: number[]; intervals: number[]; history_days: number }
 }
 
 export const serverTrafficKey = (server: TrafficServer) => `${server.source}:${server.region_id}:${server.instance_id}`

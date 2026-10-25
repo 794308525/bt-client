@@ -285,6 +285,14 @@ class AliyunController extends Controller {
     }
   }
 
+  async server_traffic_trend(args, event) {
+    try {
+      return pub.send_success(event, args.channel, await aliyunService.getServerTrafficTrend(args.data.account_id, args.data));
+    } catch (error) {
+      return sendAliyunError(event, args.channel, error);
+    }
+  }
+
   async domain_list(args, event) {
     try {
       const data = await aliyunService.listDomains(args.data.account_id, args.data);

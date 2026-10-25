@@ -17,6 +17,7 @@ const zlib = require('zlib');
 const { X509Certificate, createPrivateKey, randomBytes } = require('crypto');
 const { pub } = require('../class/public.js');
 const { serverTrafficKey, trafficRange, trafficMonthRange, summarizeTrafficMonths, aggregateTraffic, combineTraffic } = require('./server-traffic.js');
+const { normalizeTrendRange, buildTrend } = require('./server-traffic-trend');
 const { protocolRules, protocolState, ownedRules } = require('./aliyun-esa-protocol');
 
 const SUMMARY_TTL = 5 * 60;
@@ -54,6 +55,7 @@ const recordSearchRequests = new Map();
 const esaProtocolChanges = new Set();
 const serverTrafficCache = new Map();
 const serverTrafficRequests = new Map();
+const serverTrafficProfiles = new Map();
 const runServerTrafficTask = createLimiter(3);
 const runSummaryTask = createLimiter(SUMMARY_CONCURRENCY);
 const runEsaLogDownload = createLimiter(ESA_LOG_DOWNLOAD_CONCURRENCY);
@@ -1827,6 +1829,7 @@ class AliyunService {
     return {
       source: 'ecs',
       instance_id: instance.instanceId,
+      created_time: instance.creationTime || '',
       name: instance.instanceName || instance.instanceId,
       region_id: instance.regionId || regionId,
       region_name: regionName || instance.regionId || regionId,
@@ -1867,6 +1870,7 @@ class AliyunService {
     return {
       source: 'swas',
       instance_id: instance.instanceId,
+      created_time: instance.creationTime || '',
       name: instance.instanceName || instance.instanceId,
       region_id: instance.regionId || regionId,
       region_name: regionName || instance.regionId || regionId,
@@ -1948,11 +1952,11 @@ class AliyunService {
 
   async fetchServerTrafficSummary(account, servers, range) {
     const monthRange = trafficMonthRange(range.end);
-    // 月度采用小时平均速率减少云监控分页；轻量带宽指标最高支持 900 秒。
-    // 今日/昨日仍使用 900 秒数据，保留原有更新频率。
+    // 月度使用 ECS 的小时采样、EIP 的五分钟采样和轻量的十五分钟采样。
+    // 今日/昨日也按各监控指标支持的周期查询。
     const [daily, monthly] = await Promise.all([
       this.fetchServerTraffic(account, servers, range),
-      this.fetchServerTraffic(account, servers, monthRange, servers[0].source === 'swas' ? 900 : 3600),
+      this.fetchServerTraffic(account, servers, monthRange, servers[0].source === 'swas' ? 900 : servers[0].eip_id ? 300 : 3600),
     ]);
     return Object.fromEntries(servers.map(server => {
       const key = serverTrafficKey(server);
@@ -1964,11 +1968,12 @@ class AliyunService {
     }));
   }
 
-  async fetchServerTraffic(account, servers, range, period = 900) {
+  async fetchServerTraffic(account, servers, range, period) {
     const first = servers[0];
     const isSwas = first.source === 'swas';
     const isEip = !isSwas && !!first.eip_id;
     const isClassic = !isSwas && first.network_type === 'classic';
+    period = period ?? (isSwas ? 900 : 300);
     const client = isSwas ? this.createSwasClient(account, first.region_id) : this.createCmsClient(account);
     const metricNames = isSwas
       ? ['VPC_PUBLICIP_INTERNETIN_RATE', 'VPC_PUBLICIP_INTERNETOUT_RATE']
@@ -1996,7 +2001,7 @@ class AliyunService {
       const id = isEip ? server.eip_id : server.instance_id;
       const directions = responses.map(response => aggregateTraffic(response.status === 'fulfilled'
         ? response.value.points.filter(point => point && (isSwas || String(point.instanceId || point.InstanceId || '') === id))
-        : [], range, response.status === 'fulfilled' ? response.value.period : period, isEip ? 1 : 1 / 8));
+        : [], range, response.status === 'fulfilled' ? response.value.period : period, 1 / 8));
       const days = combineTraffic(...directions);
       return [serverTrafficKey(server), {
         days,
@@ -2051,6 +2056,119 @@ class AliyunService {
       start = end;
     }
     return { points, period };
+  }
+
+  async getServerTrafficProfile(account, server) {
+    const source = server.source === 'swas' ? 'swas' : server.eip_id ? 'eip' : 'ecs';
+    const namespace = source === 'eip' ? 'acs_vpc_eip' : 'acs_ecs_dashboard';
+    const metrics = source === 'swas' ? ['VPC_PUBLICIP_INTERNETIN_RATE', 'VPC_PUBLICIP_INTERNETOUT_RATE']
+      : source === 'eip' ? ['net_rx.rate', 'net_tx.rate']
+        : server.network_type === 'classic' ? ['InternetInRate', 'InternetOutRate']
+          : ['VPC_PublicIP_InternetInRate', 'VPC_PublicIP_InternetOutRate'];
+    const cacheKey = `${account.account_id}:${namespace}:${metrics.join(',')}`;
+    const cached = serverTrafficProfiles.get(cacheKey);
+    if (cached && Date.now() - cached.time < (cached.data.note ? 60000 : REGION_TTL * 1000)) return cached.data;
+    const profile = { source, namespace, metrics, periods: source === 'swas' ? [60, 300, 900] : source === 'eip' ? [60, 300] : [60, 300, 3600], bytes_per_unit: 1 / 8, note: '' };
+    if (source !== 'swas') {
+      let definitions;
+      try {
+        const client = this.createCmsClient(account);
+        definitions = await Promise.all(metrics.map(async metricName => {
+          const body = getBody(await this.request(() => client.describeMetricMetaList(new Cms.DescribeMetricMetaListRequest({ namespace, metricName, pageNumber: 1, pageSize: 100 })), 'server', { retries: READ_RETRY_COUNT }));
+          if (body.success === false) throw new Error('MetricMetadataUnavailable');
+          const definition = ((body.resources || {}).resource || []).find(item => item.metricName === metricName && item.namespace === namespace);
+          if (!definition) throw new Error('MetricMetadataUnavailable');
+          return definition;
+        }));
+      } catch (_error) {
+        profile.note = '监控项定义暂时无法读取，使用已核对的查询周期';
+      }
+      if (definitions) {
+        const periods = definitions.map(item => String(item.periods || '').split(',').map(Number));
+        profile.periods = [60, 300, 900, 3600].filter(value => periods.every(list => list.includes(value)));
+        if (!profile.periods.length) throw new AliyunServiceError('当前监控指标没有共同支持的查询周期', 'InvalidServerTrafficPeriod');
+        const factors = definitions.map(item => {
+          const unit = String(item.unit || '');
+          if (/^bytes?\/s$/i.test(unit) || unit === 'Bps') return 1;
+          if (/^bits?\/s$/i.test(unit) || unit === 'bps') return 1 / 8;
+          throw new AliyunServiceError(`当前监控指标单位不受支持：${unit}`, 'InvalidServerTrafficUnit');
+        });
+        if (factors[0] !== factors[1]) throw new AliyunServiceError('当前出入站监控指标单位不一致', 'InvalidServerTrafficUnit');
+        profile.bytes_per_unit = factors[0];
+      }
+    }
+    serverTrafficProfiles.set(cacheKey, { time: Date.now(), data: profile });
+    return profile;
+  }
+
+  async fetchServerTrafficTrend(account, server, options = {}) {
+    const profile = await this.getServerTrafficProfile(account, server);
+    let range;
+    try { range = normalizeTrendRange(options, profile); }
+    catch (error) { throw new AliyunServiceError(error.message, error.code || 'InvalidTrafficRange'); }
+    const key = `${account.account_id}:trend:${serverTrafficKey(server)}:${server.eip_id || ''}:${profile.metrics.join(',')}:${JSON.stringify(range)}:${profile.bytes_per_unit}`;
+    const cached = options.force !== true && serverTrafficCache.get(key);
+    if (cached && Date.now() - cached.time < TRAFFIC_ANALYTICS_TTL * 1000) return { ...cached.data, cached: true };
+    const pending = serverTrafficRequests.get(key);
+    if (pending) return pending;
+    const request = this.queryServerTrafficTrend(account, server, profile, range).then(data => {
+      if (!data.errors.length) {
+        while (serverTrafficCache.size >= 100) serverTrafficCache.delete(serverTrafficCache.keys().next().value);
+        serverTrafficCache.set(key, { time: Date.now(), data });
+      }
+      return data;
+    }).finally(() => serverTrafficRequests.delete(key));
+    serverTrafficRequests.set(key, request);
+    return request;
+  }
+
+  async queryServerTrafficTrend(account, server, profile, range) {
+    const isSwas = profile.source === 'swas';
+    const id = profile.source === 'eip' ? server.eip_id : server.instance_id;
+    const client = isSwas ? this.createSwasClient(account, server.region_id) : this.createCmsClient(account);
+    const errors = [];
+    const read = async (window, compared) => {
+      const results = await Promise.allSettled(profile.metrics.map(metricName => this.readServerTrafficMetric(client, {
+        namespace: profile.namespace, metricName,
+        dimensions: JSON.stringify([{ instanceId: id }]),
+        regionId: server.region_id, instanceId: server.instance_id,
+        startTime: String(window.start), endTime: String(window.end),
+        period: String(range.period), length: '1440',
+      }, isSwas)));
+      return results.map((result, index) => {
+        if (result.status === 'rejected') {
+          const error = normalizeError(result.reason, 'server');
+          errors.push({ comparison: compared, direction: index === 0 ? 'in' : 'out', message: error.status === 'permission_denied'
+            ? `缺少监控读取权限，请授予 ${isSwas ? 'swas-open:DescribeMonitorData' : 'cms:QueryMetricList'}` : error.message,
+          code: error.code, request_id: error.requestId });
+          return [];
+        }
+        if (result.value.period !== range.period) throw new AliyunServiceError('接口返回的采样周期与所选周期不一致，请切换粒度后重试', 'InvalidServerTrafficPeriod');
+        return result.value.points.filter(point => point && typeof point === 'object' && (isSwas || String(point.instanceId || point.InstanceId || '') === id));
+      });
+    };
+    const [current, previous] = await Promise.all([read(range, false), range.comparison ? read(range.comparison, true) : null]);
+    const data = buildTrend(current, previous, range, profile.bytes_per_unit);
+    const notes = [profile.note, profile.source === 'eip' ? '按当前绑定 EIP 的监控统计，换绑期间的流量可能不属于此服务器' : ''].filter(Boolean);
+    const created = Date.parse(server.created_time || '');
+    if (data.comparison && Number.isFinite(created) && range.comparison.end <= created) notes.push('对比时段早于服务器创建时间，暂无历史监控数据');
+    if (data.comparison && !data.aligned && !notes.some(note => note.includes('创建'))) notes.push('有时段缺少可对齐的监控数据，暂不计算变化比例');
+    return {
+      ...data, errors, notes, source: profile.source, cached: false, update_time: Date.now(),
+      capabilities: { periods: profile.periods, intervals: [...new Set([...profile.periods, 3600, 86400])].sort((a, b) => a - b), history_days: range.history_days },
+    };
+  }
+
+  async getServerTrafficTrend(accountId, options = {}) {
+    const requested = options.server;
+    if (!requested || !['ecs', 'swas'].includes(requested.source) || typeof requested.region_id !== 'string' || typeof requested.instance_id !== 'string') {
+      throw new AliyunServiceError('服务器流量查询参数不正确', 'InvalidTrafficServers');
+    }
+    const account = this.getAccount(accountId);
+    const listed = await this.listServers(accountId);
+    const server = listed.data.find(item => serverTrafficKey(item) === serverTrafficKey(requested));
+    if (!server) throw new AliyunServiceError('服务器列表已变化，请刷新后重试', 'TrafficServerNotFound');
+    return this.fetchServerTrafficTrend(account, server, options);
   }
 
   async getEcsDiskTotals(clients, regionId) {
@@ -4210,6 +4328,9 @@ class AliyunService {
     this.clearRecordSearchCache(accountId);
     for (const key of serverTrafficCache.keys()) {
       if (key.startsWith(`${accountId}:`)) serverTrafficCache.delete(key);
+    }
+    for (const key of serverTrafficProfiles.keys()) {
+      if (key.startsWith(`${accountId}:`)) serverTrafficProfiles.delete(key);
     }
     listCache.delete(`servers:${accountId}`);
     listCache.delete(`registered-domains:${accountId}`);

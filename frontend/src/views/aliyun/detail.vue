@@ -128,7 +128,7 @@
 								<button type="button" class="server-traffic-card" @click.stop="openServerTraffic(server)">
 									<div class="server-traffic-card__heading"><span>{{ pub.lang('流量') }}</span><span class="inbound">↓ {{ pub.lang('入站') }}</span><span class="outbound">↑ {{ pub.lang('出站') }}</span></div>
 									<div v-for="period in serverTrafficPeriods" :key="period.key" class="server-traffic-card__row" :class="{ 'server-traffic-card__row--month': period.key === 'this_month' }"><span>{{ pub.lang(period.label) }}</span><strong class="inbound">{{ formatServerTraffic(serverTraffic[serverTrafficKey(server)]?.[period.key]?.in_bytes) }}</strong><strong class="outbound">{{ formatServerTraffic(serverTraffic[serverTrafficKey(server)]?.[period.key]?.out_bytes) }}</strong></div>
-									<div class="server-traffic-card__footer"><span>{{ serverTrafficLoading ? pub.lang('更新中…') : serverTrafficStatus(server) }}</span><span>{{ pub.lang('近 30 天') }} ›</span></div>
+									<div class="server-traffic-card__footer"><span>{{ serverTrafficLoading ? pub.lang('更新中…') : serverTrafficStatus(server) }}</span><span>{{ pub.lang('查看趋势') }} ›</span></div>
 								</button>
 							</el-tooltip>
 							<div class="server-card__footer"><span>{{ pub.lang('到期') }} {{ server.expired_time ? formatExpireDate(server.expired_time) : '--' }}</span><el-button type="primary" plain size="small" :icon="Monitor" :loading="openingServerId === server.instance_id" @click="openServer(server)">{{ pub.lang('终端') }}</el-button></div>
@@ -931,7 +931,7 @@
 				<el-pagination v-model:current-page="recordLogPage" :page-size="20" layout="total, prev, pager, next" :total="recordLogTotal" @current-change="loadRecordLogs" />
 			</div>
 		</el-drawer>
-		<ServerTrafficDetail v-model="serverTrafficVisible" :account-id="accountId" :server="selectedTrafficServer" @refreshed="updateServerTraffic" />
+		<ServerTrafficDetail v-model="serverTrafficVisible" :account-id="accountId" :server="selectedTrafficServer" />
 		<RecordCheckDialog ref="recordCheckRef" :account-id="accountId" @deleted="refreshAfterRecordCheck" />
 		<ServerConnect ref="serverConnectRef" :account-id="accountId" @connected="launchServerTerminal" />
 		<EdgeHttps ref="edgeHttpsRef" :account-id="accountId" @changed="refreshEdgeHttps" />
@@ -985,6 +985,7 @@ interface CloudServer {
 	name: string
 	region_id: string
 	region_name?: string
+	eip_id?: string
 	status: string
 	os_type: string
 	os_name: string
@@ -1248,17 +1249,11 @@ const serverTrafficHint = (server: CloudServer) => {
 	const data = serverTraffic.value[serverTrafficKey(server)]
 	const errors = [...new Set(data?.errors.map(error => error.message) || [])].join('；')
 	const partialMonths = [data?.this_month?.partial ? pub.lang('本月数据不完整，显示已返回数据合计') : '', data?.last_month?.partial ? pub.lang('上月数据不完整，显示已返回数据合计') : ''].filter(Boolean)
-	return [serverTrafficError.value || errors, ...partialMonths, data?.note, data?.data_time ? `${pub.lang('最新监控')}：${formatTrafficTime(data.data_time)}` : '', pub.lang('北京时间统计公网流量，本月累计至当前，上月按完整自然月统计。监控数据可能延迟。点击查看近 30 天明细。')].filter(Boolean).join('；')
+	return [serverTrafficError.value || errors, ...partialMonths, data?.note, data?.data_time ? `${pub.lang('最新监控')}：${formatTrafficTime(data.data_time)}` : '', pub.lang('北京时间统计公网流量，本月累计至当前，上月按完整自然月统计。监控数据可能延迟。点击查看小时趋势、每日汇总及时间对比。')].filter(Boolean).join('；')
 }
 const openServerTraffic = (server: CloudServer) => {
 	selectedTrafficServer.value = server
 	serverTrafficVisible.value = true
-}
-const updateServerTraffic = (data: ServerTraffic) => {
-	if (selectedTrafficServer.value) {
-		const key = serverTrafficKey(selectedTrafficServer.value)
-		serverTraffic.value[key] = { ...serverTraffic.value[key], ...data }
-	}
 }
 const refreshVisibleTraffic = () => {
 	if (chinaDate() !== trafficDate || Date.now() - trafficUpdatedAt >= 5 * 60000) loadServerTraffic()
