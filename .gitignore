@@ -9,5 +9,9 @@
 /public/electron/
 /run/
 /苹果证书/
+# 本地设计稿、导出文件与验收截图
+/design/
+/exports/
+/截图/
 /public/ssl/*.key
 /public/ssl/*.pem
