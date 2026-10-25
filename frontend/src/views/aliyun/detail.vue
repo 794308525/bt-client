@@ -310,14 +310,15 @@
 									<div class="esa-record-actions">
 										<el-button :icon="Search" :disabled="!selectedEsaSite || esaRecordLoading || esaRecordBatchLoading" @click="openRecordCheck('esa')">{{ pub.lang('一键检测') }}</el-button>
 										<el-button :icon="Download" :loading="esaRecordExporting" :disabled="esaRecordLoading || esaRecordBatchLoading" @click="openEsaExportDialog">{{ pub.lang('导出') }}</el-button>
-										<el-button :disabled="!selectedEsaRecords.length || esaRecordBatchLoading" @click="batchEsaRecordAction('disable_proxy')">{{ pub.lang('批量关闭代理') }}</el-button>
-										<el-button type="danger" plain :disabled="!selectedEsaRecords.length || esaRecordBatchLoading" @click="batchEsaRecordAction('delete')">{{ pub.lang('批量删除') }}</el-button>
+											<el-button :disabled="!selectedEsaRecords.length || esaRecordBatchLoading || !!esaProtocolSavingHost" @click="batchEsaRecordAction('disable_proxy')">{{ pub.lang('批量关闭代理') }}</el-button>
+											<el-button type="danger" plain :disabled="!selectedEsaRecords.length || esaRecordBatchLoading || !!esaProtocolSavingHost" @click="batchEsaRecordAction('delete')">{{ pub.lang('批量删除') }}</el-button>
 										<el-button :icon="Refresh" :loading="esaRecordLoading || esaDetailLoading" @click="refreshEsaRecords" />
 										<el-button type="primary" :icon="Plus" @click="openEsaRecordDialog()">{{ pub.lang('新增解析') }}</el-button>
 									</div>
 									</div>
+									<el-alert v-if="esaProtocolError" type="warning" :closable="false" :title="pub.lang('访问协议读取失败：{}', esaProtocolError)" class="esa-partial-alert"><el-button link type="primary" :loading="esaProtocolLoading" @click="loadEsaRecordProtocols">{{ pub.lang('重新读取协议') }}</el-button></el-alert>
 									<div class="record-table-wrap">
-									<el-table :data="esaRecords" v-loading="esaRecordLoading || esaRecordBatchLoading" row-key="record_id" height="100%" @selection-change="selectedEsaRecords = $event">
+										<el-table :data="esaRecords" v-loading="esaRecordLoading || esaRecordBatchLoading" row-key="record_id" height="100%" @selection-change="selectedEsaRecords = $event">
 										<el-table-column type="selection" width="46" />
 										<el-table-column prop="record_name" :label="pub.lang('主机记录')" min-width="210">
 											<template #default="{ row }"><div class="record-hostname"><span :title="esaHostname(row)">{{ esaHostname(row) }}</span><el-tooltip :content="copiedHostname === esaHostname(row) ? pub.lang('已复制') : pub.lang('复制完整域名')" placement="top"><el-button link :icon="copiedHostname === esaHostname(row) ? Check : CopyDocument" :type="copiedHostname === esaHostname(row) ? 'success' : 'default'" :aria-label="pub.lang('复制完整域名')" @click.stop="copyRecordHostname(esaHostname(row))" /></el-tooltip></div></template>
@@ -327,7 +328,19 @@
 										<el-table-column :label="pub.lang('代理')" width="80">
 											<template #default="{ row }">
 												<el-tooltip :content="esaRecordCanProxy(row) ? (row.proxied ? pub.lang('点击关闭代理') : pub.lang('点击开启代理')) : pub.lang('该记录类型不支持代理')" placement="top">
-													<el-switch v-model="row.proxied" active-color="#ff6a00" :loading="esaProxyLoadingId === row.record_id" :disabled="!esaRecordCanProxy(row)" :before-change="() => changeEsaRecordProxy(row)" />
+													<el-switch v-model="row.proxied" active-color="#ff6a00" :loading="esaProxyLoadingId === row.record_id" :disabled="!esaRecordCanProxy(row) || !!esaProtocolSavingHost" :before-change="() => changeEsaRecordProxy(row)" @change="loadEsaRecordProtocols" />
+												</el-tooltip>
+											</template>
+										</el-table-column>
+										<el-table-column :label="pub.lang('访问协议')" width="175">
+											<template #default="{ row }">
+												<el-tooltip :content="esaProtocolTip(row)" placement="top">
+													<el-select v-if="row.proxied && esaRecordCanProxy(row)" :model-value="esaProtocolStates[esaHostname(row).toLowerCase()]?.mode || ''" :placeholder="esaProtocolPlaceholder(row)" size="small" :loading="esaProtocolLoading || esaProtocolSavingHost === esaHostname(row).toLowerCase()" :disabled="esaProtocolLoading || !!esaProtocolSavingHost || !!esaProxyLoadingId || esaRecordBatchLoading || !esaProtocolStates[esaHostname(row).toLowerCase()] || esaProtocolStates[esaHostname(row).toLowerCase()]?.read_only" @change="changeEsaProtocol(row, $event)">
+														<el-option :label="pub.lang('原样')" value="original" />
+														<el-option label="HTTP → HTTPS" value="https" />
+														<el-option label="HTTPS → HTTP" value="http" :disabled="esaProtocolStates[esaHostname(row).toLowerCase()]?.hsts" />
+													</el-select>
+													<span v-else class="muted">—</span>
 												</el-tooltip>
 											</template>
 										</el-table-column>
@@ -336,8 +349,8 @@
 										<el-table-column :label="pub.lang('操作')" width="170" fixed="right">
 											<template #default="{ row }">
 												<el-tooltip :content="previewHostnameTip(esaHostname(row))" :disabled="canPreviewHostname(esaHostname(row))" placement="top"><el-button link type="primary" :disabled="!canPreviewHostname(esaHostname(row))" @click="previewRecordWebsite(esaHostname(row))">{{ pub.lang('预览') }}</el-button></el-tooltip>
-												<el-button link type="primary" :disabled="!esaRecordEditable(row)" @click="openEsaRecordDialog(row)">{{ pub.lang('编辑') }}</el-button>
-												<el-button link type="danger" @click="removeEsaRecord(row)">{{ pub.lang('删除') }}</el-button>
+												<el-button link type="primary" :disabled="!esaRecordEditable(row) || !!esaProtocolSavingHost" @click="openEsaRecordDialog(row)">{{ pub.lang('编辑') }}</el-button>
+												<el-button link type="danger" :disabled="!!esaProtocolSavingHost" @click="removeEsaRecord(row)">{{ pub.lang('删除') }}</el-button>
 											</template>
 										</el-table-column>
 									</el-table>
@@ -381,7 +394,7 @@
 								<el-tab-pane :label="pub.lang('HTTPS 证书')" name="certificates">
 									<div class="esa-content-toolbar">
 										<div class="esa-https-summary">
-											<el-tag :type="esaHttpsEnabled ? 'success' : 'info'">HTTPS {{ esaHttpsEnabled ? pub.lang('已开启') : pub.lang('未开启') }}</el-tag>
+											<el-tag :type="esaHttpsEnabled ? 'success' : 'info'">HTTPS {{ pub.lang(esaHttpsEnabled === null ? '未确认' : esaHttpsEnabled ? '已开启' : '未开启') }}</el-tag>
 											<span>{{ esaTlsSummary }}</span>
 										</div>
 										<div class="esa-record-actions">
@@ -389,6 +402,7 @@
 												<el-button :icon="Clock" @click="esaDeployDrawerVisible = true">{{ pub.lang('部署任务') }}</el-button>
 											</el-badge>
 											<el-button type="primary" :icon="Plus" @click="openEsaCertificateApplyDialog">{{ pub.lang('申请证书') }}</el-button>
+											<el-button @click="openEsaHttps(true)">{{ pub.lang('上传证书') }}</el-button>
 											<el-button :icon="Refresh" :loading="esaCertificateLoading" @click="refreshEsaCertificates" />
 										</div>
 									</div>
@@ -471,9 +485,10 @@
 					<el-table-column label="HTTPS" width="90"><template #default="{ row }"><el-tag :type="row.ssl_enabled ? 'success' : 'info'">{{ row.ssl_enabled ? pub.lang('已开启') : pub.lang('未开启') }}</el-tag></template></el-table-column>
 					<el-table-column :label="pub.lang('状态')" width="120"><template #default="{ row }"><el-tag :type="cloudStatusType(row.status)">{{ cloudStatusName(row.status) }}</el-tag></template></el-table-column>
 					<el-table-column :label="pub.lang('更新时间')" width="180"><template #default="{ row }">{{ formatDate(row.update_time || row.create_time) }}</template></el-table-column>
-					<el-table-column :label="pub.lang('操作')" width="130" fixed="right">
+					<el-table-column :label="pub.lang('操作')" width="205" fixed="right">
 						<template #default="{ row }">
 							<el-button link type="primary" @click="openCdnDomainDialog(row)">{{ pub.lang('修改源站') }}</el-button>
+							<el-button link type="primary" @click="edgeHttpsRef?.open({ product: 'cdn', name: row.domain_name, domain_name: row.domain_name })">{{ pub.lang('HTTPS 配置') }}</el-button>
 							<el-tooltip :content="pub.lang('请先停用后再删除')" placement="top" :disabled="row.status === 'offline'">
 								<span><el-button link type="danger" :disabled="row.status !== 'offline'" @click="removeCdnDomain(row)">{{ pub.lang('删除') }}</el-button></span>
 							</el-tooltip>
@@ -919,6 +934,7 @@
 		<ServerTrafficDetail v-model="serverTrafficVisible" :account-id="accountId" :server="selectedTrafficServer" @refreshed="updateServerTraffic" />
 		<RecordCheckDialog ref="recordCheckRef" :account-id="accountId" @deleted="refreshAfterRecordCheck" />
 		<ServerConnect ref="serverConnectRef" :account-id="accountId" @connected="launchServerTerminal" />
+		<EdgeHttps ref="edgeHttpsRef" :account-id="accountId" @changed="refreshEdgeHttps" />
 	</div>
 </template>
 
@@ -938,6 +954,7 @@ import ServerAllowance from './components/server-allowance.vue'
 import RecordCheckDialog from './components/record-check.vue'
 import ServerConnect from './components/server-connect.vue'
 import EsaCache from './components/esa-cache.vue'
+import EdgeHttps from './components/edge-https.vue'
 import { formatServerTraffic, formatTrafficTime, serverTrafficKey, type ServerTraffic } from '@utils/server-traffic'
 
 defineOptions({ name: 'AliyunDetail' })
@@ -991,6 +1008,7 @@ interface EsaSite { site_id: string; site_name: string; access_type: string; cov
 interface EsaRecordQuota { status: 'known' | 'unknown'; limit: number | null; error?: string }
 interface EsaSiteDetail extends EsaSite { instance_id: string; resource_group_id: string; offline_reason: string; version_management: boolean; record_quota?: EsaRecordQuota }
 interface EsaRecord { record_id: string; record_name: string; type: string; value: string; priority: number; weight: number; port: number; flag: number; tag: string; ttl: number; proxied: boolean; record_cname: string; source_type: string; host_policy: string; http_ports: string; https_ports: string; comment: string; update_time: string }
+interface EsaProtocolState { mode: string; read_only: boolean; notice: string; inherited: boolean; hsts: boolean; https_enabled: boolean | null }
 interface EsaOrigin { origin_id: string; name: string; address: string; type: string; enabled: boolean; weight: number; host_header: string }
 interface EsaOriginPool { pool_id: string; name: string; enabled: boolean; record_name: string; origins: EsaOrigin[] }
 interface EsaOriginRule { config_id: string; config_type: string; rule_name: string; rule_enable: string; rule: string; origin_scheme: string; origin_host: string; origin_http_port: string; origin_https_port: string; origin_sni: string; origin_verify: string }
@@ -1111,6 +1129,53 @@ const serverPartial = ref(false)
 const showServerIp = ref(false)
 const openingServerId = ref('')
 const serverConnectRef = ref<InstanceType<typeof ServerConnect>>()
+const edgeHttpsRef = ref<InstanceType<typeof EdgeHttps>>()
+const esaProtocolStates = ref<Record<string, EsaProtocolState>>({})
+const esaProtocolLoading = ref(false)
+const esaProtocolError = ref('')
+const esaProtocolSavingHost = ref('')
+let esaProtocolRequestId = 0
+const esaProtocolPlaceholder = (row: EsaRecord) => esaProtocolLoading.value ? pub.lang('读取中') : esaProtocolStates.value[esaHostname(row).toLowerCase()]?.read_only ? pub.lang('云端规则') : pub.lang('未确认')
+const esaProtocolTip = (row: EsaRecord) => !row.proxied || !esaRecordCanProxy(row) ? pub.lang('仅开启 ESA 代理的地址或 CNAME 记录可配置访问协议') : esaProtocolError.value || esaProtocolStates.value[esaHostname(row).toLowerCase()]?.notice || pub.lang('正在读取云端协议规则')
+const loadEsaRecordProtocols = async () => {
+	const siteId = selectedEsaSite.value?.site_id
+	const names = [...new Set(esaRecords.value.filter(row => row.proxied && esaRecordCanProxy(row)).map(row => esaHostname(row).toLowerCase()))]
+	const id = ++esaProtocolRequestId
+	esaProtocolStates.value = {}
+	esaProtocolError.value = ''
+	esaProtocolLoading.value = false
+	if (!siteId || !names.length) return
+	esaProtocolLoading.value = true
+	try {
+		const result = await request(routes.aliyun.esa_record_protocols.path, { account_id: accountId, site_id: siteId, record_names: names })
+		if (id !== esaProtocolRequestId || selectedEsaSite.value?.site_id !== siteId) return
+		if (!result?.status) throw new Error(result?.msg || pub.lang('访问协议读取失败'))
+		esaProtocolStates.value = result.data.protocols || {}
+	} catch (error) { if (id === esaProtocolRequestId) esaProtocolError.value = error instanceof Error ? error.message : pub.lang('访问协议读取失败') }
+	finally { if (id === esaProtocolRequestId) esaProtocolLoading.value = false }
+}
+const changeEsaProtocol = async (row: EsaRecord, mode: string) => {
+	const siteId = selectedEsaSite.value?.site_id
+	const host = esaHostname(row).toLowerCase()
+	if (!siteId || esaProtocolSavingHost.value || mode === esaProtocolStates.value[host]?.mode) return
+	esaProtocolSavingHost.value = host
+	try {
+		const result = await request(routes.aliyun.esa_record_protocol_set.path, { account_id: accountId, site_id: siteId, record_id: row.record_id, mode })
+		if (result?.status) Message.success(pub.lang('访问协议已提交，请等待阿里云下发生效'))
+		else Message.request(result)
+	} catch (error) { Message.error(error instanceof Error ? error.message : pub.lang('访问协议修改失败')) }
+	finally {
+		if (selectedEsaSite.value?.site_id === siteId) await loadEsaRecordProtocols()
+		esaProtocolSavingHost.value = ''
+	}
+}
+const openEsaHttps = (upload = false) => {
+	if (selectedEsaSite.value) edgeHttpsRef.value?.open({ product: 'esa', name: selectedEsaSite.value.site_name, site_id: selectedEsaSite.value.site_id }, upload)
+}
+const refreshEdgeHttps = (scope: { product: 'esa' | 'cdn'; site_id?: string }) => {
+	if (scope.product === 'esa' && scope.site_id === selectedEsaSite.value?.site_id) refreshEsaCertificates()
+	if (scope.product === 'cdn') loadCdnDomains(cdnPage.value)
+}
 const serverPage = ref(1)
 const serverQuery = reactive({ keyword: '', source: 'all', region: 'all', status: 'all' })
 const serverSourceOptions = computed(() => {
@@ -1351,6 +1416,7 @@ const esaOrigins = reactive<EsaOrigins>({ pools: [], rules: [], partial: false, 
 const esaOriginLoading = ref(false)
 const esaOriginLoaded = ref(false)
 const esaCertificateRecords = ref<EsaCertificateRecord[]>([])
+const esaCertificatePool = ref<EsaCertificate[]>([])
 const esaHttpsBasic = ref<EsaHttpsBasic[]>([])
 const esaHttpsApplication = ref<EsaHttpsApplication[]>([])
 const esaCertificatePartial = ref(false)
@@ -1416,6 +1482,7 @@ const esaRecordQuotaTip = computed(() => [
 ].filter(Boolean).join(' '))
 const esaCertificateGroups = computed<EsaCertificateGroup[]>(() => {
 	const groups = new Map<string, EsaCertificateGroup>()
+	esaCertificatePool.value.forEach(certificate => groups.set(certificate.certificate_id, { ...certificate, record_names: [] }))
 	esaCertificateRecords.value.forEach(record => {
 		record.certificates.forEach(certificate => {
 			const key = certificate.certificate_id || [certificate.common_name, certificate.not_after, certificate.issuer].join('|')
@@ -1457,9 +1524,12 @@ const esaCertificateSummary = computed(() => esaCertificateRecords.value.reduce(
 	failed: esaDeployTasks.value.filter(task => task.status === 'failed').length,
 	none: 0,
 }))
-const esaHttpsEnabled = computed(() => esaHttpsBasic.value.some(item => item.config_type === 'global' && item.https === 'on') || esaHttpsBasic.value.some(item => item.https === 'on'))
+const esaHttpsEnabled = computed(() => {
+	const global = esaHttpsBasic.value.find(item => item.config_type === 'global')
+	return global ? global.https === 'on' : null
+})
 const esaTlsSummary = computed(() => {
-	const globalConfig = esaHttpsBasic.value.find(item => item.config_type === 'global') || esaHttpsBasic.value[0]
+	const globalConfig = esaHttpsBasic.value.find(item => item.config_type === 'global')
 	if (!globalConfig) return pub.lang('暂无 HTTPS 基础配置信息')
 	const protocols = [['tls10', 'TLS 1.0'], ['tls11', 'TLS 1.1'], ['tls12', 'TLS 1.2'], ['tls13', 'TLS 1.3']]
 		.filter(([field]) => globalConfig[field as keyof EsaHttpsBasic] === 'on')
@@ -1938,6 +2008,10 @@ const loadEsaSiteDetail = async (siteId = selectedEsaSite.value?.site_id) => {
 }
 const loadEsaRecords = async (page = esaRecordPage.value, force = false) => {
 	const requestId = ++esaRecordListRequestId
+	++esaProtocolRequestId
+	esaProtocolStates.value = {}
+	esaProtocolLoading.value = false
+	esaProtocolError.value = ''
 	const siteId = selectedEsaSite.value?.site_id
 	if (!siteId) return
 	const keyword = esaRecordKeyword.value
@@ -1965,6 +2039,7 @@ const loadEsaRecords = async (page = esaRecordPage.value, force = false) => {
 		esaRecordSiteTotalError.value = result.data.site_total_error || ''
 		Object.assign(esaRecordAppliedFilters, { keyword, type })
 		esaRecordLoaded.value = true
+		loadEsaRecordProtocols()
 	} catch (error) {
 		if (requestId === esaRecordListRequestId) Message.error(error instanceof Error ? error.message : pub.lang('解析记录获取失败'))
 	} finally { if (requestId === esaRecordListRequestId) esaRecordLoading.value = false }
@@ -1998,6 +2073,7 @@ const loadEsaCertificates = async (page = esaCertificatePage.value) => {
 		if (!result?.status) return Message.request(result)
 		if (selectedEsaSite.value?.site_id !== siteId) return
 		esaCertificateRecords.value = result.data.records || []
+		esaCertificatePool.value = result.data.certificates || []
 		esaHttpsBasic.value = result.data.https_basic || []
 		esaHttpsApplication.value = result.data.https_application || []
 		esaCertificatePartial.value = !!result.data.partial
@@ -2101,6 +2177,7 @@ const selectEsaSite = async (site: EsaSite) => {
 	esaOrigins.errors = []
 	esaOriginLoaded.value = false
 	esaCertificateRecords.value = []
+	esaCertificatePool.value = []
 	esaHttpsBasic.value = []
 	esaHttpsApplication.value = []
 	esaCertificatePartial.value = false
@@ -2527,6 +2604,7 @@ const certificateRemainingText = (certificate: EsaCertificate) => {
 }
 const certificateCoverageText = (certificate: EsaCertificateGroup) => {
 	if (certificate.deploy_task) return certificate.deploy_task.domain
+	if (!certificate.record_names.length) return certificate.sans || certificate.common_name || pub.lang('暂未匹配解析')
 	const wildcard = [certificate.common_name, ...String(certificate.sans || '').split(',')].find(name => name.trim().startsWith('*.' ))?.trim()
 	if (wildcard) return `${wildcard} · ${pub.lang(`覆盖 ${certificate.record_names.length} 条解析`)}`
 	if (certificate.record_names.length === 1) return certificate.record_names[0]

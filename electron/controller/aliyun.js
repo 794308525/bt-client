@@ -467,6 +467,41 @@ class AliyunController extends Controller {
     catch (error) { return sendAliyunError(event, args.channel, error); }
   }
 
+  async esa_certificate_upload(args, event) {
+    try { return pub.send_success(event, args.channel, await aliyunService.uploadEsaCertificate(args.data.account_id, args.data)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async esa_https_get(args, event) {
+    try { return pub.send_success(event, args.channel, await aliyunService.getEsaHttpsConfiguration(args.data.account_id, args.data)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async esa_record_protocols(args, event) {
+    try { return pub.send_success(event, args.channel, await aliyunService.getEsaRecordProtocols(args.data.account_id, args.data)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async esa_record_protocol_set(args, event) {
+    try { return pub.send_success(event, args.channel, await aliyunService.setEsaRecordProtocol(args.data.account_id, args.data)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async cdn_certificate_upload(args, event) {
+    try { return pub.send_success(event, args.channel, await aliyunService.uploadCdnCertificate(args.data.account_id, args.data)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async cdn_https_get(args, event) {
+    try { return pub.send_success(event, args.channel, await aliyunService.getCdnHttpsConfiguration(args.data.account_id, args.data)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
+  async cdn_https_set(args, event) {
+    try { return pub.send_success(event, args.channel, await aliyunService.setCdnHttpsConfiguration(args.data.account_id, args.data)); }
+    catch (error) { return sendAliyunError(event, args.channel, error); }
+  }
+
   async esa_traffic_analytics(args, event) {
     try {
       const data = await aliyunService.getEsaTrafficAnalytics(args.data.account_id, args.data);

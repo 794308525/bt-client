@@ -402,7 +402,7 @@ class SslDeployService {
       if (!certificate || !privateKey) throw new SslServiceError('证书渠道返回的证书或私钥不完整', 'InvalidCertificateContent');
       const result = await aliyunService.uploadEsaCertificate(task.account_id, {
         site_id: task.site_id,
-        name: `${task.domain}-${task.order_id}`.slice(0, 128),
+        name: `${task.domain.replace(/^\*\./, 'wildcard.')}-${task.order_id}`.slice(0, 128),
         certificate,
         private_key: privateKey,
       });

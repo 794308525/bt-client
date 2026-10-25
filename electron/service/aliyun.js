@@ -14,8 +14,10 @@ const OSS = require('ali-oss');
 const Log = require('ee-core/log');
 const https = require('https');
 const zlib = require('zlib');
+const { X509Certificate, createPrivateKey, randomBytes } = require('crypto');
 const { pub } = require('../class/public.js');
 const { serverTrafficKey, trafficRange, trafficMonthRange, summarizeTrafficMonths, aggregateTraffic, combineTraffic } = require('./server-traffic.js');
+const { protocolRules, protocolState, ownedRules } = require('./aliyun-esa-protocol');
 
 const SUMMARY_TTL = 5 * 60;
 const OSS_TRAFFIC_TTL = 5 * 60;
@@ -49,6 +51,7 @@ const esaUrlRankingRequests = new Map();
 const esaTrafficRequests = new Map();
 const esaCapabilityRequests = new Map();
 const recordSearchRequests = new Map();
+const esaProtocolChanges = new Set();
 const serverTrafficCache = new Map();
 const serverTrafficRequests = new Map();
 const runServerTrafficTask = createLimiter(3);
@@ -2725,18 +2728,40 @@ class AliyunService {
     };
   }
 
+  esaCertificateView(item) {
+    const utc = value => /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value || '') ? `${value.replace(' ', 'T')}Z` : value || '';
+    return { certificate_id: String(item.id || ''), name: item.name || '', common_name: item.commonName || '', sans: item.SAN || '', type: item.type || '', status: item.status || '', issuer: item.issuerCN || item.issuer || '',
+      not_before: utc(item.notBefore), not_after: utc(item.notAfter), public_key_algorithm: item.pubAlg || '', signature_algorithm: item.sigAlg || '', update_time: utc(item.updateTime || item.createTime) };
+  }
+
+  async listEsaCertificatePool(esa, siteId) {
+    const certificates = [];
+    for (let page = 1; page <= 1000; page += 1) {
+      const body = getBody(await this.request(() => esa.listCertificates(new Esa.ListCertificatesRequest({ siteId, pageNumber: page, pageSize: 50, validOnly: false })), 'esa'));
+      const rows = body.result || [];
+      certificates.push(...rows.map(item => this.esaCertificateView(item)));
+      if (!rows.length || certificates.length >= Number(body.totalCount) || rows.length < 50) return certificates;
+    }
+    throw new AliyunServiceError('证书数量过多，无法完整读取，请在阿里云控制台核对', 'CertificateListTooLarge');
+  }
+
   async listEsaCertificates(accountId, options = {}) {
     const account = this.getAccount(accountId);
     const { esa } = this.createClients(account);
     const siteId = this.normalizeEsaSiteId(options.site_id);
     const keyword = String(options.keyword || '').trim();
-    const recordBody = getBody(await this.request(() => esa.listRecords(new Esa.ListRecordsRequest({
-      siteId,
-      pageNumber: 1,
-      pageSize: 500,
-      ...(keyword ? { recordName: keyword, recordMatchType: 'fuzzy' } : {}),
-    })), 'esa'));
-    const recordNames = Array.from(new Set((recordBody.records || [])
+    let recordBody;
+    const siteRecords = [];
+    for (let page = 1; ; page += 1) {
+      recordBody = getBody(await this.request(() => esa.listRecords(new Esa.ListRecordsRequest({
+        siteId, pageNumber: page, pageSize: 500,
+        ...(keyword ? { recordName: keyword, recordMatchType: 'fuzzy' } : {}),
+      })), 'esa'));
+      const rows = recordBody.records || [];
+      siteRecords.push(...rows);
+      if (!rows.length || siteRecords.length >= Number(recordBody.totalCount) || rows.length < 500) break;
+    }
+    const recordNames = Array.from(new Set(siteRecords
       .map(item => String(item.recordName || '').trim())
       .filter(Boolean)));
     const recordNameBatches = [];
@@ -2762,6 +2787,7 @@ class AliyunService {
         pageNumber: 1,
         pageSize: 500,
       })), 'esa'),
+      this.listEsaCertificatePool(esa, siteId),
     ]);
     const certificateMatches = new Map();
     certificateResults.forEach((batchResult, index) => {
@@ -2781,20 +2807,7 @@ class AliyunService {
         record_name: result.recordName || recordName,
         status: result.status || 'none',
         applying_count: Number(result.applylingCount || 0),
-        certificates: (result.certificates || []).map(item => ({
-          certificate_id: item.id || '',
-          name: item.name || '',
-          common_name: item.commonName || '',
-          sans: item.SAN || '',
-          type: item.type || '',
-          status: item.status || '',
-          issuer: item.issuerCN || item.issuer || '',
-          not_before: item.notBefore || '',
-          not_after: item.notAfter || '',
-          public_key_algorithm: item.pubAlg || '',
-          signature_algorithm: item.sigAlg || '',
-          update_time: item.updateTime || item.createTime || '',
-        })),
+        certificates: (result.certificates || []).map(item => this.esaCertificateView(item)),
         error: '',
       };
     });
@@ -2805,8 +2818,10 @@ class AliyunService {
       .filter(Boolean);
     if (httpsResults[0].status === 'rejected') errors.push({ module: 'https_basic', ...normalizeError(httpsResults[0].reason, 'esa') });
     if (httpsResults[1].status === 'rejected') errors.push({ module: 'https_application', ...normalizeError(httpsResults[1].reason, 'esa') });
+    if (httpsResults[2].status === 'rejected') errors.push({ module: 'certificate_pool', ...normalizeError(httpsResults[2].reason, 'esa') });
     return {
       records,
+      certificates: httpsResults[2].status === 'fulfilled' ? httpsResults[2].value : [],
       https_basic: (basicBody.configs || []).map(item => ({
         config_id: String(item.configId || ''),
         config_type: item.configType || '',
@@ -2842,17 +2857,9 @@ class AliyunService {
     const account = this.getAccount(accountId);
     const { esa } = this.createClients(account);
     const siteId = this.normalizeEsaSiteId(data.site_id);
-    const name = String(data.name || '').trim().slice(0, 128);
-    const certificate = String(data.certificate || '').trim();
-    const privateKey = String(data.private_key || '').trim();
-    if (!name) throw new AliyunServiceError('证书名称不能为空', 'CertificateNameRequired');
-    if (!certificate.includes('-----BEGIN CERTIFICATE-----')) {
-      throw new AliyunServiceError('证书内容不完整', 'InvalidCertificateContent');
-    }
-    if (!/-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/.test(privateKey)) {
-      throw new AliyunServiceError('证书私钥不完整', 'InvalidCertificatePrivateKey');
-    }
-    const body = getBody(await this.request(() => esa.setCertificate(new Esa.SetCertificateRequest({
+    const site = getBody(await this.request(() => esa.getSite(new Esa.GetSiteRequest({ siteId })), 'esa')).siteModel || {};
+    const { name, certificate, privateKey } = this.normalizeEdgeCertificate(data, 'esa', site.siteName);
+    const body = getBody(await this.requestCertificateUpload(() => esa.setCertificate(new Esa.SetCertificateRequest({
       siteId,
       name,
       type: 'upload',
@@ -2860,7 +2867,57 @@ class AliyunService {
       privateKey,
     })), 'esa'));
     this.clearAccountCache(accountId);
-    return { certificate_id: String(body.id || ''), requestId: body.requestId || '' };
+    return { certificate_id: String(body.id || ''), name, requestId: body.requestId || '' };
+  }
+
+  normalizeEdgeCertificate(data, product, target) {
+    const hostname = String(target || '').trim().toLowerCase();
+    if (!hostname) throw new AliyunServiceError('未取得目标域名，请刷新后重试', 'MissingCertificateDomain');
+    const certificate = String(data.certificate || '').trim();
+    const privateKey = String(data.private_key || '').trim();
+    if (certificate.length > 128 * 1024 || privateKey.length > 32 * 1024) throw new AliyunServiceError('证书或私钥内容过长', 'InvalidCertificateContent');
+    const blocks = certificate.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g) || [];
+    if (!blocks.length || certificate.replace(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g, '').trim()) {
+      throw new AliyunServiceError('请填写 PEM 格式的证书链，服务器证书放在第一段', 'InvalidCertificateContent');
+    }
+    let leaf;
+    let key;
+    try {
+      leaf = new X509Certificate(blocks[0]);
+      blocks.slice(1).forEach(block => new X509Certificate(block));
+    } catch { throw new AliyunServiceError('无法解析 PEM 证书，请检查完整的证书链', 'InvalidCertificateContent'); }
+    try { key = createPrivateKey(privateKey); }
+    catch { throw new AliyunServiceError('无法解析私钥，请填写无密码保护的 PEM 私钥', 'InvalidCertificatePrivateKey'); }
+    if (!leaf.checkPrivateKey(key)) throw new AliyunServiceError('证书与私钥不匹配', 'CertificateKeyMismatch');
+    if (leaf.ca) throw new AliyunServiceError('第一段必须是服务器证书，不能是 CA 证书', 'InvalidCertificateContent');
+    if (Date.parse(leaf.validFrom) > Date.now() || Date.parse(leaf.validTo) <= Date.now()) throw new AliyunServiceError('证书尚未生效或已经过期', 'InvalidCertificateValidity');
+    const dnsNames = (leaf.subjectAltName || '').split(/,\s*/).filter(item => item.startsWith('DNS:')).map(item => item.slice(4).toLowerCase());
+    const matches = product === 'esa'
+      ? !!leaf.checkHost(hostname) || dnsNames.some(name => name.endsWith(`.${hostname}`))
+      : hostname.startsWith('*.') ? dnsNames.includes(hostname) : !!leaf.checkHost(hostname);
+    if (!matches) throw new AliyunServiceError('证书覆盖的域名与目标站点或加速域名不匹配', 'CertificateDomainMismatch');
+    const stamp = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date()).replace(/\D/g, '');
+    const name = String(data.name || '').trim() || `${product}-${hostname.replace('*', 'wildcard').slice(0, 85)}-${stamp}-${randomBytes(3).toString('hex')}`;
+    if (name.length > 128 || !/^[a-zA-Z0-9._-]+$/.test(name)) throw new AliyunServiceError('证书名称限 128 位英文字母、数字、点、下划线或连字符', 'InvalidCertificateName');
+    return { name, certificate, privateKey };
+  }
+
+  async requestCertificateUpload(handler, product) {
+    try { return await this.request(handler, product); }
+    catch (error) {
+      const normalized = normalizeError(error, product);
+      // 证书接口的异常可能携带提交内容，不向界面、日志或错误详情回传原始报文。
+      const messages = {
+        ...ESA_RECORD_ERROR_MESSAGES,
+        'Certificate.Duplicated': '证书名称已存在，请换一个名称后重试',
+        'CertificateContent.Duplicated': '该证书已上传，请勿重复提交',
+        'CertNameAlreadyExists': '证书名称已存在，请换一个名称后重试',
+        'Certificate.MissMatch': '证书与私钥不匹配',
+        'Certificate.Expired': '证书已过期，请更换有效证书',
+      };
+      const code = /^[\w.-]{1,100}$/.test(normalized.code) ? normalized.code : 'CertificateUploadFailed';
+      throw new AliyunServiceError(messages[code] || getStatusErrorMessage(product, normalized.status) || `证书上传失败（${code}），请检查证书及云端配置`, code, normalized.requestId);
+    }
   }
 
   normalizeEsaPurgeType(type) {
@@ -2917,6 +2974,140 @@ class AliyunService {
       startTime: new Date(Date.now() - 48 * 3600000).toISOString(), endTime: new Date().toISOString(),
     })), 'esa'));
     return { data: (body.tasks || []).map((item, index) => ({ row_key: `${item.taskId}:${index}`, task_id: String(item.taskId || ''), content: item.content || '', status: item.status || '', progress: item.process || '', description: item.description || '', create_time: item.createTime || '' })), total: Number(body.totalCount || 0), requestId: body.requestId || '' };
+  }
+
+  async getEsaHttpsConfiguration(accountId, data = {}) {
+    const { esa } = this.createClients(this.getAccount(accountId));
+    const siteId = this.normalizeEsaSiteId(data.site_id);
+    const site = getBody(await this.request(() => esa.getSite(new Esa.GetSiteRequest({ siteId })), 'esa')).siteModel || {};
+    // 版本管理需要选择环境、创建和发布版本，不能把默认版本 0 当成当前线上版本修改。
+    if (site.versionManagement) return { read_only: true, notice: '该站点已启用配置版本管理，请在阿里云控制台选择目标环境修改 HTTPS 设置。', enabled: null, https_enabled: null, code: '301', can_enable: false, rule_count: 0 };
+    const [basic, application, rules, certs] = await Promise.all([
+      this.request(() => esa.listHttpsBasicConfigurations(new Esa.ListHttpsBasicConfigurationsRequest({ siteId, configType: 'global', pageNumber: 1, pageSize: 1 })), 'esa'),
+      this.request(() => esa.listHttpsApplicationConfigurations(new Esa.ListHttpsApplicationConfigurationsRequest({ siteId, configType: 'global', pageNumber: 1, pageSize: 1 })), 'esa'),
+      this.request(() => esa.listHttpsApplicationConfigurations(new Esa.ListHttpsApplicationConfigurationsRequest({ siteId, configType: 'rule', pageNumber: 1, pageSize: 1 })), 'esa'),
+      this.request(() => esa.listCertificates(new Esa.ListCertificatesRequest({ siteId, validOnly: true, pageNumber: 1, pageSize: 50 })), 'esa'),
+    ]);
+    const global = (getBody(application).configs || [])[0];
+    const basicGlobal = (getBody(basic).configs || [])[0];
+    const httpsEnabled = basicGlobal ? basicGlobal.https === 'on' : null;
+    const valid = (getBody(certs).result || []).map(item => this.esaCertificateView(item)).some(item => Date.parse(item.not_before) <= Date.now() && Date.parse(item.not_after) > Date.now());
+    return { enabled: global?.httpsForce === 'on', code: global?.httpsForceCode || '301', config_id: global?.configId ? String(global.configId) : '', https_enabled: httpsEnabled, can_enable: httpsEnabled === true && valid, rule_count: Number(getBody(rules).totalCount || 0), read_only: false };
+  }
+
+  async listEsaProtocolConfigs(esa, method, Request, siteId) {
+    const configs = [];
+    for (let page = 1; page <= 1000; page += 1) {
+      const body = getBody(await this.request(() => esa[method](new Request({ siteId, pageNumber: page, pageSize: 500 })), 'esa'));
+      const rows = body.configs || [];
+      configs.push(...rows);
+      if (!rows.length || rows.length < 500 || configs.length >= Number(body.totalCount)) return configs;
+    }
+    throw new AliyunServiceError('规则数量过多，无法完整读取，请在阿里云控制台核对', 'ProtocolRulesTooLarge');
+  }
+
+  async getEsaProtocolContext(esa, siteId) {
+    const site = getBody(await this.request(() => esa.getSite(new Esa.GetSiteRequest({ siteId })), 'esa')).siteModel || {};
+    if (!site.siteName) throw new AliyunServiceError('未取得站点域名，请刷新后重试', 'MissingSiteName');
+    const context = { site_name: String(site.siteName).toLowerCase(), version_managed: !!site.versionManagement, application: [], redirects: [], basic: [] };
+    if (context.version_managed) return context;
+    [context.application, context.redirects, context.basic] = await Promise.all([
+      this.listEsaProtocolConfigs(esa, 'listHttpsApplicationConfigurations', Esa.ListHttpsApplicationConfigurationsRequest, siteId),
+      this.listEsaProtocolConfigs(esa, 'listRedirectRules', Esa.ListRedirectRulesRequest, siteId),
+      this.listEsaProtocolConfigs(esa, 'listHttpsBasicConfigurations', Esa.ListHttpsBasicConfigurationsRequest, siteId),
+    ]);
+    return context;
+  }
+
+  normalizeEsaProtocolHost(value, siteName) {
+    const host = String(value || '').trim().toLowerCase();
+    if (host.length > 253 || !/^(?:\*\.)?[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(host) || host !== siteName && !host.endsWith(`.${siteName}`)) {
+      throw new AliyunServiceError('协议配置的域名不属于当前站点或格式不正确', 'InvalidProtocolHost');
+    }
+    return host;
+  }
+
+  async getEsaRecordProtocols(accountId, data = {}) {
+    const names = Array.isArray(data.record_names) ? [...new Set(data.record_names)] : [];
+    if (!names.length || names.length > 100) throw new AliyunServiceError('单次查询需要 1–100 个域名', 'InvalidProtocolHosts');
+    const { esa } = this.createClients(this.getAccount(accountId));
+    const context = await this.getEsaProtocolContext(esa, this.normalizeEsaSiteId(data.site_id));
+    return { protocols: Object.fromEntries(names.map(name => {
+      const host = this.normalizeEsaProtocolHost(name, context.site_name);
+      return [host, protocolState(host, context)];
+    })) };
+  }
+
+  async writeEsaProtocolRule(esa, siteId, kind, current, desired) {
+    const https = kind === 'https';
+    if (!desired) {
+      if (!current) return;
+      const method = https ? 'deleteHttpsApplicationConfiguration' : 'deleteRedirectRule';
+      const Request = https ? Esa.DeleteHttpsApplicationConfigurationRequest : Esa.DeleteRedirectRuleRequest;
+      return this.request(() => esa[method](new Request({ siteId, configId: Number(current.configId) })), 'esa');
+    }
+    const method = https ? (current ? 'updateHttpsApplicationConfiguration' : 'createHttpsApplicationConfiguration') : (current ? 'updateRedirectRule' : 'createRedirectRule');
+    const Request = https ? (current ? Esa.UpdateHttpsApplicationConfigurationRequest : Esa.CreateHttpsApplicationConfigurationRequest) : (current ? Esa.UpdateRedirectRuleRequest : Esa.CreateRedirectRuleRequest);
+    const fields = https ? ['ruleName', 'ruleEnable', 'rule', 'sequence', 'httpsForce', 'httpsForceCode'] : ['ruleName', 'ruleEnable', 'rule', 'sequence', 'type', 'targetUrl', 'statusCode', 'reserveQueryString'];
+    const request = { siteId, ...(current ? { configId: Number(current.configId) } : {}) };
+    fields.forEach(field => { if (desired[field] !== undefined) request[field] = desired[field]; });
+    return this.request(() => esa[method](new Request(request)), 'esa');
+  }
+
+  async setEsaRecordProtocol(accountId, data = {}) {
+    const key = `${accountId}:${this.normalizeEsaSiteId(data.site_id)}`;
+    if (esaProtocolChanges.has(key)) throw new AliyunServiceError('该站点正在修改访问协议，请稍后重试', 'ProtocolChangeInProgress');
+    esaProtocolChanges.add(key);
+    try { return await this.applyEsaRecordProtocol(accountId, data); }
+    finally { esaProtocolChanges.delete(key); }
+  }
+
+  async applyEsaRecordProtocol(accountId, data) {
+    if (!['original', 'https', 'http'].includes(data.mode)) throw new AliyunServiceError('请选择原样或协议跳转方向', 'InvalidProtocolMode');
+    const { esa, record } = await this.getEsaRecord(this.getAccount(accountId), data.record_id);
+    const siteId = this.normalizeEsaSiteId(data.site_id);
+    if (Number(record.siteId) !== siteId || !record.proxied || !['A/AAAA', 'A', 'AAAA', 'CNAME'].includes(record.recordType)) throw new AliyunServiceError('仅支持当前站点已开启 ESA 代理的地址或 CNAME 记录', 'ProtocolRecordNotProxied');
+    const context = await this.getEsaProtocolContext(esa, siteId);
+    const host = this.normalizeEsaProtocolHost(record.recordName, context.site_name);
+    const state = protocolState(host, context);
+    if (state.read_only) throw new AliyunServiceError(state.notice, 'ProtocolRulesReadOnly');
+    if (data.mode === 'http' && state.hsts) throw new AliyunServiceError('该域名存在 HSTS，切换到 HTTP 会导致循环跳转；请先在控制台处理 HSTS，并考虑浏览器缓存的有效期', 'ProtocolHstsConflict');
+    if (data.mode !== 'original') {
+      if (!state.https_enabled) throw new AliyunServiceError('请先启用该域名的 HTTPS 并配置有效证书', 'HttpsCertificateRequired');
+      const body = getBody(await this.request(() => esa.listCertificatesByRecord(new Esa.ListCertificatesByRecordRequest({ siteId, recordName: host, detail: true, validOnly: true })), 'esa'));
+      const valid = (body.result || []).some(item => (item.certificates || []).map(cert => this.esaCertificateView(cert)).some(cert => Date.parse(cert.not_before) <= Date.now() && Date.parse(cert.not_after) > Date.now()));
+      if (!valid) throw new AliyunServiceError('该域名没有有效且匹配的边缘证书，请先上传或申请证书', 'HttpsCertificateRequired');
+    }
+    const names = protocolRules(host);
+    const owned = ownedRules(host, context);
+    const previous = { https: owned.https ? { ...owned.https } : null, redirect: owned.redirect ? { ...owned.redirect } : null };
+    const https = { ruleName: names.httpsName, rule: names.hostRule, ruleEnable: 'on', sequence: previous.https?.sequence || 1, httpsForce: data.mode === 'https' ? 'on' : 'off', httpsForceCode: '307' };
+    const reverse = data.mode === 'http' ? { ruleName: names.redirectName, rule: names.redirectRule, ruleEnable: 'on', sequence: previous.redirect?.sequence || 1, type: 'dynamic', targetUrl: names.targetUrl, statusCode: '307', reserveQueryString: 'on' } : null;
+    // 先解除旧方向，再启用新方向，避免同时生效形成跳转环路；失败时恢复本应用管理的规则。
+    try {
+      if (data.mode === 'http') {
+        await this.writeEsaProtocolRule(esa, siteId, 'https', previous.https, https);
+        await this.writeEsaProtocolRule(esa, siteId, 'redirect', previous.redirect, reverse);
+      } else {
+        await this.writeEsaProtocolRule(esa, siteId, 'redirect', previous.redirect, null);
+        await this.writeEsaProtocolRule(esa, siteId, 'https', previous.https, https);
+      }
+    } catch (error) {
+      try {
+        const now = ownedRules(host, await this.getEsaProtocolContext(esa, siteId));
+        if (now.altered) throw new Error('规则已被其他操作修改');
+        if (previous.redirect && previous.redirect.ruleEnable !== 'off') {
+          await this.writeEsaProtocolRule(esa, siteId, 'https', now.https, previous.https);
+          await this.writeEsaProtocolRule(esa, siteId, 'redirect', now.redirect, previous.redirect);
+        } else {
+          await this.writeEsaProtocolRule(esa, siteId, 'redirect', now.redirect, previous.redirect);
+          await this.writeEsaProtocolRule(esa, siteId, 'https', now.https, previous.https);
+        }
+      } catch { throw new AliyunServiceError('协议修改失败，未能恢复全部原规则，请到阿里云控制台核对该域名的 HTTPS 和重定向规则', 'ProtocolRestoreFailed'); }
+      const normalized = normalizeError(error, 'esa');
+      throw new AliyunServiceError(`协议修改失败，已恢复原规则：${normalized.message}`, 'ProtocolUpdateFailed', normalized.requestId);
+    }
+    return { host, mode: data.mode };
   }
 
   async getEsaUrlRankings(accountId, siteId, host, range, onProgress) {
@@ -3549,6 +3740,74 @@ class AliyunService {
       sources: JSON.stringify(sources),
     })), 'cdn'));
     return { domain_name: domainName, requestId: body.requestId || '' };
+  }
+
+  async getCdnHttpsConfiguration(accountId, data = {}) {
+    const { cdn } = this.createClients(this.getAccount(accountId));
+    const domainName = this.normalizeCdnDomainName(data.domain_name);
+    const [details, config, certs] = await Promise.all([
+      this.request(() => cdn.describeCdnDomainDetail(new Cdn.DescribeCdnDomainDetailRequest({ domainName })), 'cdn'),
+      this.request(() => cdn.describeCdnDomainConfigs(new Cdn.DescribeCdnDomainConfigsRequest({ domainName, functionNames: 'https_force,http_force' })), 'cdn'),
+      this.request(() => cdn.describeDomainCertificateInfo(new Cdn.DescribeDomainCertificateInfoRequest({ domainName })), 'cdn'),
+    ]);
+    const configs = getBody(config).domainConfigs?.domainConfig || [];
+    const globalConfigs = configs.filter(item => !item.parentId || ['0', '-1'].includes(String(item.parentId)));
+    const https = globalConfigs.filter(item => item.functionName === 'https_force');
+    const http = globalConfigs.filter(item => item.functionName === 'http_force');
+    const args = Object.fromEntries((https[0]?.functionArgs?.functionArg || []).map(item => [item.argName, item.argValue]));
+    const certificates = (getBody(certs).certInfos?.certInfo || []).map(item => ({ name: item.certName || '', domain: item.certDomainName || '', not_before: item.certStartTime || '', not_after: item.certExpireTime || '', issuer: item.certOrg || '', status: item.status || '' }));
+    const httpsEnabled = getBody(details).getDomainDetailModel?.serverCertificateStatus === 'on';
+    const valid = certificates.some(item => Date.parse(item.not_before) <= Date.now() && Date.parse(item.not_after) > Date.now());
+    return { enabled: args.enable === 'on', code: args.https_rewrite || '301', config_id: https[0]?.configId || '', https_enabled: httpsEnabled,
+      can_enable: httpsEnabled && valid, http_conflict: configs.some(item => item.functionName === 'http_force'), http_configs: http,
+      certificates, rule_count: configs.length - globalConfigs.length, read_only: https.length > 1 || http.length > 1,
+      notice: https.length > 1 || http.length > 1 ? '存在多条全局跳转配置，请先在阿里云控制台核对。' : '' };
+  }
+
+  async uploadCdnCertificate(accountId, data = {}) {
+    const { cdn } = this.createClients(this.getAccount(accountId));
+    const domainName = this.normalizeCdnDomainName(data.domain_name);
+    const { name, certificate, privateKey } = this.normalizeEdgeCertificate(data, 'cdn', domainName);
+    const body = getBody(await this.requestCertificateUpload(() => cdn.setCdnDomainSSLCertificate(new Cdn.SetCdnDomainSSLCertificateRequest({
+      domainName, certType: 'upload', certName: name, SSLProtocol: 'on', SSLPub: certificate, SSLPri: privateKey,
+    })), 'cdn'));
+    this.clearAccountCache(accountId);
+    return { name, requestId: body.requestId || '' };
+  }
+
+  async setCdnHttpsConfiguration(accountId, data = {}) {
+    if (typeof data.enabled !== 'boolean' || !['301', '308'].includes(String(data.code))) throw new AliyunServiceError('HTTPS 开关或跳转码不正确', 'InvalidHttpsConfiguration');
+    const current = await this.getCdnHttpsConfiguration(accountId, data);
+    if (current.read_only) throw new AliyunServiceError(current.notice, 'AmbiguousHttpsConfiguration');
+    if (data.enabled && !current.can_enable) throw new AliyunServiceError('请先上传有效证书并开启 HTTPS，再开启强制 HTTPS', 'HttpsCertificateRequired');
+    if (data.enabled && current.http_conflict && (!data.replace_http_force || !current.http_configs.length || current.rule_count)) {
+      throw new AliyunServiceError('存在强制 HTTP 配置；请确认替换，条件规则请先在阿里云控制台处理', 'HttpForceConflict');
+    }
+    if (!data.enabled && !current.config_id) return { requestId: '' };
+    const { cdn } = this.createClients(this.getAccount(accountId));
+    const domainName = this.normalizeCdnDomainName(data.domain_name);
+    let removed = false;
+    if (data.enabled && current.http_conflict) {
+      await this.request(() => cdn.deleteSpecificConfig(new Cdn.DeleteSpecificConfigRequest({ domainName, configId: current.http_configs.map(item => item.configId).join(',') })), 'cdn');
+      removed = true;
+    }
+    try {
+      const body = getBody(await this.request(() => cdn.batchSetCdnDomainConfig(new Cdn.BatchSetCdnDomainConfigRequest({ domainNames: domainName,
+        functions: JSON.stringify([{ functionName: 'https_force', ...(current.config_id ? { ConfigId: current.config_id } : {}), functionArgs: [
+          { argName: 'enable', argValue: data.enabled ? 'on' : 'off' }, { argName: 'https_rewrite', argValue: String(data.code) },
+        ] }]),
+      })), 'cdn'));
+      return { requestId: body.requestId || '' };
+    } catch (error) {
+      if (removed) {
+        try {
+          await this.request(() => cdn.batchSetCdnDomainConfig(new Cdn.BatchSetCdnDomainConfigRequest({ domainNames: domainName,
+            functions: JSON.stringify(current.http_configs.map(item => ({ functionName: 'http_force', functionArgs: item.functionArgs.functionArg }))),
+          })), 'cdn');
+        } catch { throw new AliyunServiceError('强制 HTTPS 配置失败，原强制 HTTP 配置未能恢复，请立即到阿里云控制台核对', 'HttpsConfigurationRestoreFailed'); }
+      }
+      throw error;
+    }
   }
 
   async ensureCdnDomainDeletable(cdn, domainName) {

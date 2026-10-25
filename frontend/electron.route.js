@@ -761,6 +761,13 @@ const routes = {
 		esa_cache_quota: { title: '获取 ESA 刷新额度', method: 'ipc', path: 'controller.aliyun.esa_cache_quota' },
 		esa_cache_purge: { title: '批量刷新 ESA 缓存', method: 'ipc', path: 'controller.aliyun.esa_cache_purge' },
 		esa_cache_tasks: { title: '获取 ESA 刷新任务', method: 'ipc', path: 'controller.aliyun.esa_cache_tasks' },
+		esa_certificate_upload: { title: '上传 ESA 证书', method: 'ipc', path: 'controller.aliyun.esa_certificate_upload' },
+		esa_https_get: { title: '获取 ESA HTTPS 配置', method: 'ipc', path: 'controller.aliyun.esa_https_get' },
+		esa_record_protocols: { title: '读取 ESA 域名访问协议', method: 'ipc', path: 'controller.aliyun.esa_record_protocols' },
+		esa_record_protocol_set: { title: '修改 ESA 域名访问协议', method: 'ipc', path: 'controller.aliyun.esa_record_protocol_set' },
+		cdn_certificate_upload: { title: '上传 CDN 证书', method: 'ipc', path: 'controller.aliyun.cdn_certificate_upload' },
+		cdn_https_get: { title: '获取 CDN HTTPS 配置', method: 'ipc', path: 'controller.aliyun.cdn_https_get' },
+		cdn_https_set: { title: '修改 CDN 强制 HTTPS', method: 'ipc', path: 'controller.aliyun.cdn_https_set' },
 		esa_traffic_analytics: {
 			title: '获取阿里云 ESA 流量分析',
 			method: 'ipc',
