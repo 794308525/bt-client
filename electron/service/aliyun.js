@@ -2017,7 +2017,13 @@ class AliyunService {
       let nextToken = '';
       const tokens = new Set();
       do {
-        const requestParams = { ...params, startTime: String(start), endTime: String(end), nextToken: nextToken || undefined };
+        // 部分轻量地域接口不接受毫秒时间戳，使用秒精度的 UTC 日期格式。
+        const requestParams = {
+          ...params,
+          startTime: isSwas ? isoTime(start) : String(start),
+          endTime: isSwas ? isoTime(end) : String(end),
+          nextToken: nextToken || undefined,
+        };
         const body = getBody(await runServerTrafficTask(() => this.request(() => isSwas
           ? client.describeMonitorData(new Swas.DescribeMonitorDataRequest(requestParams))
           : client.describeMetricList(new Cms.DescribeMetricListRequest(requestParams)), 'server', { retries: READ_RETRY_COUNT })));
