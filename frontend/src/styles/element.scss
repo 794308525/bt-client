@@ -270,10 +270,17 @@ $tabs-bg-color: #f5f7fa;
 		@apply mt-4 text-light text-[1.3rem];
 	}
 }
-// 重写loading样式
-.el-overlay,
-.el-overlay-dialog {
-	top: 41px !important;
+// 挂到 body 的弹层按实际标题栏高度避让，页面内的弹层从内容区顶部开始。
+.el-overlay {
+	top: var(--app-titlebar-height, 41px) !important;
+	height: auto !important;
+}
+.layout-right-main .el-overlay {
+	top: 0 !important;
+}
+.el-overlay .el-overlay-dialog {
+	position: absolute;
+	top: 0 !important;
 }
 
 .el-loading-mask .el-loading-spinner {

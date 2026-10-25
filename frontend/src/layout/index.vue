@@ -1,6 +1,6 @@
 <template>
 	<div class="layout h-full">
-		<div class="layout-tabs select-none" id="layout-tabs"><Tabs /></div>
+		<div class="layout-tabs select-none" id="layout-tabs" ref="layoutTabs"><Tabs /></div>
 		<div class="layout-right-main" ref="layoutBody"><Main /></div>
 	</div>
 </template>
@@ -13,11 +13,17 @@ import Main from './Main/index.vue'
 import { useTheme } from '@/plugins/theme'
 import { useSettingStore } from '@store/setting'
 
+const layoutTabs = ref<HTMLElement>()
 const layoutBody = ref<HTMLElement>() // 主视图区域
 
 const useStore = useSettingStore()
 const { mainWidth } = storeToRefs(useStore)
 const { switchDark } = useTheme()
+
+useResizeObserver(layoutTabs, entries => {
+	const height = entries[0].target.getBoundingClientRect().height
+	document.documentElement.style.setProperty('--app-titlebar-height', `${height}px`)
+})
 
 useResizeObserver(layoutBody, entries => {
 	const entry = entries[0]
@@ -33,6 +39,9 @@ useResizeObserver(layoutBody, entries => {
 onMounted(() => {
 	switchDark()
 })
+onUnmounted(() => {
+	document.documentElement.style.removeProperty('--app-titlebar-height')
+})
 </script>
 
 <style scoped lang="scss">
@@ -43,12 +52,20 @@ onMounted(() => {
 	max-height: 100vh;
 	flex-direction: column;
 	background-color: var(--el-bg-color);
-	// 	z-index: 0;
+	.layout-tabs {
+		position: relative;
+		z-index: 1;
+		flex-shrink: 0;
+	}
 	.layout-right-main {
 		flex: 1;
+		min-height: 0;
 		display: block;
 		overflow: auto;
 		position: relative;
+		// 将页面弹窗的层级和固定定位限制在内容区，顶部页签保持可操作。
+		z-index: 0;
+		contain: layout;
 	}
 }
 </style>
