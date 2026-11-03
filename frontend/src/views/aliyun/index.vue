@@ -92,31 +92,39 @@
 								<div class="aliyun-card__remark" :title="account.remark">{{ account.remark }}</div>
 							</div>
 						</div>
-						<el-dropdown
-							trigger="click"
-							@command="command => handleAccountCommand(command, account)">
-							<el-button text :icon="MoreFilled" :loading="refreshingAccounts.has(account.account_id)" class="aliyun-card__more" @click.stop />
-							<template #dropdown>
-								<el-dropdown-menu>
-									<el-dropdown-item command="edit">{{ pub.lang('编辑') }}</el-dropdown-item>
-									<el-dropdown-item command="remove" divided>{{ pub.lang('删除') }}</el-dropdown-item>
-								</el-dropdown-menu>
-							</template>
-						</el-dropdown>
+						<div class="aliyun-card__actions" @click.stop>
+							<el-tooltip :content="pub.lang('刷新账号')" :enterable="false" placement="top">
+								<el-button
+									text
+									:icon="Refresh"
+									:loading="refreshingAccounts.has(account.account_id)"
+									:aria-label="pub.lang('刷新账号')"
+									@click="refreshAccount(account, true)" />
+							</el-tooltip>
+							<el-dropdown
+								trigger="click"
+								placement="bottom-end"
+								@command="command => handleAccountCommand(command, account)">
+								<el-button
+									text
+									:icon="MoreFilled"
+									:title="pub.lang('更多操作')"
+									:aria-label="pub.lang('更多操作')"
+									@click.stop />
+								<template #dropdown>
+									<el-dropdown-menu>
+										<el-dropdown-item command="edit">{{ pub.lang('编辑') }}</el-dropdown-item>
+										<el-dropdown-item command="remove" divided>{{ pub.lang('删除') }}</el-dropdown-item>
+									</el-dropdown-menu>
+								</template>
+							</el-dropdown>
+						</div>
 					</div>
 				</template>
 				<div class="aliyun-balance">
 					<strong>{{ formatBalance(account.balance) }}</strong>
 					<span>
 						{{ pub.lang('余额') }}
-						<el-button
-							text
-							circle
-							:icon="Refresh"
-							:loading="refreshingAccounts.has(account.account_id)"
-							class="aliyun-balance__refresh"
-							:title="pub.lang('刷新')"
-							@click.stop="refreshAccount(account, true)" />
 						<small>{{ formatRefreshTime(account.resource_refresh_time) }}</small>
 						<em v-if="resourceStatusText(account, 'balance')">{{ resourceStatusText(account, 'balance') }}</em>
 					</span>
@@ -175,6 +183,28 @@
 						maxlength="40"
 						show-word-limit
 						:placeholder="pub.lang('例如：生产环境')" />
+				</el-form-item>
+				<el-form-item :label="pub.lang('密钥获取')">
+					<div class="credential-guide">
+						<el-link
+							href="https://ram.console.aliyun.com/profile/access-keys"
+							target="_blank"
+							rel="noopener noreferrer"
+							type="primary">
+							{{ pub.lang('前往官方控制台获取密钥') }} ↗
+						</el-link>
+						<p class="credential-guide__note">
+							{{ pub.lang('建议使用 RAM 子账号密钥。') }}
+							<el-link
+								href="https://help.aliyun.com/zh/ram/user-guide/create-an-accesskey-pair"
+								target="_blank"
+								rel="noopener noreferrer"
+								type="primary">
+								{{ pub.lang('获取指引') }} ↗
+							</el-link>
+						</p>
+						<p class="credential-guide__note">{{ pub.lang('Secret 仅在创建时显示，请及时保存。') }}</p>
+					</div>
 				</el-form-item>
 				<el-form-item :label="pub.lang('AccessKey ID')" prop="access_key_id">
 					<el-input
@@ -999,21 +1029,29 @@ onBeforeUnmount(() => {
 	white-space: nowrap;
 }
 
-.aliyun-card__more {
+.aliyun-card__actions {
+	display: flex;
 	flex: 0 0 auto;
-	width: 3rem;
-	height: 3rem;
-	padding: 0;
-	border: 1px solid var(--el-border-color);
-	border-radius: 0.5rem;
-	background: transparent;
-	color: var(--el-text-color-regular);
+	align-items: center;
+	gap: 0.4rem;
+	margin-left: auto;
+
+	.el-button {
+		width: 3rem;
+		height: 3rem;
+		margin: 0;
+		padding: 0;
+		border: 1px solid var(--el-border-color);
+		border-radius: 0.5rem;
+		background: transparent;
+		color: var(--el-text-color-regular);
+	}
 }
 
 .aliyun-balance {
 	display: flex;
 	align-items: flex-start;
-	padding: 0.8rem 0 1.1rem;
+	padding: 0 0 1.1rem;
 	flex-direction: column;
 
 	span {
@@ -1034,14 +1072,6 @@ onBeforeUnmount(() => {
 			font-size: 1.1rem;
 			font-style: normal;
 		}
-	}
-
-	.aliyun-balance__refresh {
-		width: 2.2rem;
-		height: 2.2rem;
-		margin-left: 0.15rem;
-		padding: 0;
-		vertical-align: middle;
 	}
 
 	strong {
@@ -1094,6 +1124,17 @@ onBeforeUnmount(() => {
 	margin-left: 0.4rem;
 	color: var(--el-text-color-secondary);
 	font-size: 1.2rem;
+}
+
+.credential-guide {
+	width: 100%;
+}
+
+.credential-guide__note {
+	margin: 0.4rem 0 0;
+	color: var(--el-text-color-secondary);
+	font-size: 1.2rem;
+	line-height: 1.7;
 }
 
 .aliyun-group-add {

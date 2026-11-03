@@ -903,6 +903,10 @@ const routes = {
 		},
 	},
 	tencent: {
+		probe_resources: { title: '探测腾讯云产品能力', method: 'ipc', path: 'controller.tencent.probe_resources' },
+		resources: { title: '管理腾讯云产品资源', method: 'ipc', path: 'controller.tencent.resources' },
+		cos_upload: { title: '上传 COS 文件', method: 'ipc', path: 'controller.tencent.cos_upload' },
+		cos_download: { title: '下载 COS 文件', method: 'ipc', path: 'controller.tencent.cos_download' },
 		list: { title: '获取腾讯云账号', method: 'ipc', path: 'controller.tencent.list' },
 		find: { title: '获取腾讯云账号详情', method: 'ipc', path: 'controller.tencent.find' },
 		credentials: { title: '查看腾讯云账号凭据', method: 'ipc', path: 'controller.tencent.credentials' },

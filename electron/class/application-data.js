@@ -5,7 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 // 数据结构调整时同步递增；不同结构的程序不得同时使用同一份数据。
-const SCHEMA_REVISION = 1;
+const SCHEMA_REVISION = 2;
 let current = null;
 const heldLocks = new Set();
 // 此模块也由渲染进程的预加载脚本引用，不能在加载时依赖受限的浏览器全局对象。

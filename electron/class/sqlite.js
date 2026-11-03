@@ -68,6 +68,7 @@ class Sqlite {
             this.checkField('aliyun_account', 'resource_error', 'TEXT', '""')
             this.checkField('aliyun_account', 'resource_error_detail', 'TEXT', '""')
             this.checkField('aliyun_account', 'resource_status', 'TEXT', '"{}"')
+            this.checkField('tencent_account', 'resource_summary', 'TEXT', '"{}"')
             this.checkField('cloudflare_account', 'sort', 'INTEGER', '0')
             this.checkField('cloudflare_account', 'zone_count', 'INTEGER', '-1')
             this.checkField('cloudflare_account', 'cloudflare_account_id', 'TEXT', '""')
@@ -400,6 +401,7 @@ class Sqlite {
             \`lighthouse_count\` INTEGER DEFAULT -1,
             \`server_refresh_time\` INTEGER DEFAULT 0,
             \`server_error\` TEXT DEFAULT "",
+            \`resource_summary\` TEXT DEFAULT "{}",
             \`sort\` INTEGER DEFAULT 0,
             \`addtime\` INTEGER DEFAULT 0,
             \`update_time\` INTEGER DEFAULT 0

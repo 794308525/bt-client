@@ -22,7 +22,7 @@
 				</article>
 				<article class="about-feature">
 					<h3>{{ pub.lang('腾讯云资源管理') }}</h3>
-					<p>{{ pub.lang('集中管理腾讯云国内站、国际站账号与云服务器。') }}</p>
+					<p>{{ pub.lang('管理腾讯云国内站、国际站账号、服务器、域名解析、COS、CDN 与 EdgeOne，支持产品权限探测、批量解析、文件传输、源站和 HTTPS 配置、证书选择、缓存刷新预热、任务自动跟踪及流量查询。') }}</p>
 				</article>
 				<article class="about-feature">
 					<h3>{{ pub.lang('运维工具箱') }}</h3>

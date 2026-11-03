@@ -3,8 +3,10 @@
 const { CommonClient } = require('tencentcloud-sdk-nodejs-common');
 const { createHash } = require('crypto');
 const { pub } = require('../class/public.js');
+const { errorOf, parseSummary } = require('./tencent-errors');
+const { TencentResources } = require('./tencent-resources');
 
-const VERSIONS = { billing: '2018-07-09', cvm: '2017-03-12', vpc: '2017-03-12', lighthouse: '2020-03-24', region: '2022-06-27', monitor: '2018-07-24' };
+const VERSIONS = { billing: '2018-07-09', cvm: '2017-03-12', vpc: '2017-03-12', lighthouse: '2020-03-24', region: '2022-06-27', monitor: '2018-07-24', dnspod: '2021-03-23', domain: '2018-08-08', cdn: '2018-06-06', teo: '2022-09-01', ssl: '2019-12-05' };
 const TTL = 5 * 60 * 1000;
 const DAY = 86400000;
 const OFFSET = 8 * 3600000;
@@ -21,24 +23,6 @@ async function mapLimit(items, limit, handler) {
       result[index] = await handler(items[index], index);
     }
   }));
-  return result;
-}
-
-function errorOf(error, account) {
-  const code = String(error && error.code || 'TencentCloudError').replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 120);
-  let message = String(error && error.message || '腾讯云请求失败');
-  if (account) {
-    for (const value of [account.secret_id, account.secret_key]) {
-      if (value) message = message.split(value).join('[已隐藏]');
-    }
-  }
-  message = message.replace(/AKID[a-zA-Z0-9]+/g, '[已隐藏]').replace(/[\r\n<>]/g, ' ').slice(0, 400);
-  if (/AuthFailure|UnauthorizedOperation/.test(code)) message = '凭据无效或缺少操作权限，请核对账号站点、SecretId、SecretKey 和 CAM 授权';
-  if (/RequestLimitExceeded|LimitExceeded/.test(code)) message = '腾讯云查询频率或额度受限，请稍后刷新';
-  if (/timeout|ETIMEDOUT|network|fetch failed/i.test(message)) message = '腾讯云请求超时或网络异常，请稍后刷新';
-  const result = new Error(message);
-  result.code = code;
-  result.requestId = String(error && error.requestId || '').slice(0, 120);
   return result;
 }
 
@@ -120,6 +104,7 @@ class TencentService {
     this.cache = new Map();
     this.inflight = new Map();
     this.powerTasks = new Map();
+    this.resources = new TencentResources(this);
   }
 
   getAccount(id) {
@@ -133,7 +118,7 @@ class TencentService {
   safeAccount(account) {
     if (!account) return null;
     const { secret_key: _key, ...safe } = account;
-    return safe;
+    return { ...safe, resource_summary: parseSummary(account.resource_summary) };
   }
 
   accountKey(account) {
@@ -178,7 +163,11 @@ class TencentService {
       try { return await client.request(action, params); }
       catch (error) {
         // 写操作绝不重试，网络超时不等于腾讯云未受理操作。
-        if (write || attempt >= 1 || !/RequestLimitExceeded|InternalError|ETIMEDOUT/.test(String(error.code || error.message))) throw errorOf(error, account);
+        if (write || attempt >= 1 || !/RequestLimitExceeded|InternalError|ETIMEDOUT/.test(String(error.code || error.message))) {
+          const normalized = errorOf(error, account);
+          normalized.action = `${service}:${action}`;
+          throw normalized;
+        }
         await sleep(500 * (attempt + 1));
       }
     }
@@ -257,7 +246,7 @@ class TencentService {
   }
 
   async refreshSummary(id, force = true) {
-    await Promise.allSettled([this.refreshBalance(id, force), this.listServers(id, force)]);
+    await Promise.allSettled([this.refreshBalance(id, force), this.listServers(id, force), this.resources.probe(id, force)]);
     return this.safeAccount(this.getAccount(id));
   }
 

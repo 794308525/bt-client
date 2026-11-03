@@ -43,243 +43,288 @@
 			:closable="false"
 			show-icon
 			class="page-alert" />
-		<section class="server-heading">
-			<h2>
-				{{ pub.lang('服务器') }} <small>{{ filtered.length }} / {{ servers.length }}</small>
-			</h2>
-			<el-tag v-if="partial" type="warning">{{ pub.lang('部分数据') }}</el-tag
-			><span>{{ pub.lang('更新') }} {{ timeText(refreshTime) }}</span
-			><el-button :icon="Refresh" :loading="loading" @click="loadServers(true)">{{
-				pub.lang('刷新服务器')
-			}}</el-button>
-		</section>
-		<el-alert v-if="failures.length" type="warning" :closable="false" class="page-alert"
-			><template #title>{{ pub.lang('部分产品或地域获取失败，已保留其他可用数据') }}</template
-			><el-collapse class="failure-details"
-				><el-collapse-item :title="pub.lang('查看失败详情')"
-					><p v-for="(failure, index) in failures" :key="index">
-						{{ failure.source }} {{ failure.region_id }}：{{ failure.message
-						}}<small v-if="failure.request_id"> · RequestId: {{ failure.request_id }}</small>
-					</p></el-collapse-item
-				></el-collapse
-			></el-alert
-		>
-		<div class="toolbar">
-			<div class="toolbar-filters">
-				<el-input
-					v-model="query.keyword"
-					clearable
-					:prefix-icon="Search"
-					:placeholder="pub.lang('搜索名称、实例 ID 或 IP')" />
-				<el-select v-model="query.source"
-					><el-option :label="pub.lang('全部类型')" value="all" /><el-option
-						label="CVM"
-						value="cvm" /><el-option :label="pub.lang('轻量应用服务器')" value="lighthouse"
-				/></el-select>
-				<el-select v-model="query.region" filterable
-					><el-option :label="pub.lang('全部地域')" value="all" /><el-option
-						v-for="region in regions"
-						:key="region.id"
-						:label="region.name"
-						:value="region.id"
-				/></el-select>
-				<el-select v-model="query.status"
-					><el-option :label="pub.lang('全部状态')" value="all" /><el-option
-						v-for="status in statuses"
-						:key="status"
-						:label="pub.lang(statusName(status))"
-						:value="status"
-				/></el-select>
-			</div>
-			<div class="toolbar-actions">
-				<el-tooltip :content="pub.lang(showIp ? '隐藏 IP' : '显示 IP')"
-					><el-button :icon="showIp ? Hide : View" @click="showIp = !showIp"
-				/></el-tooltip>
-			</div>
-		</div>
-		<div v-loading="loading" class="server-grid">
-			<article v-for="server in paged" :key="serverKey(server)" class="server-card">
-				<header>
-					<el-icon class="server-icon"><Monitor /></el-icon>
-					<div class="server-name">
-						<strong :title="server.name">{{ server.name }}</strong
-						><small>{{ server.instance_id }}</small>
+		<el-tabs v-model="activeProduct" class="product-tabs" @tab-change="changeProduct">
+			<el-tab-pane label="服务器" name="servers">
+				<section class="server-heading">
+					<h2>
+						{{ pub.lang('服务器') }} <small>{{ filtered.length }} / {{ servers.length }}</small>
+					</h2>
+					<el-tag v-if="partial" type="warning">{{ pub.lang('部分数据') }}</el-tag
+					><span>{{ pub.lang('更新') }} {{ timeText(refreshTime) }}</span
+					><el-button :icon="Refresh" :loading="loading" @click="loadServers(true)">{{
+						pub.lang('刷新服务器')
+					}}</el-button>
+				</section>
+				<el-alert v-if="failures.length" type="warning" :closable="false" class="page-alert"
+					><template #title>{{ pub.lang('部分产品或地域获取失败，已保留其他可用数据') }}</template
+					><el-collapse class="failure-details"
+						><el-collapse-item :title="pub.lang('查看失败详情')"
+							><p v-for="(failure, index) in failures" :key="index">
+								{{ failure.source }} {{ failure.region_id }}：{{ failure.message
+								}}<small v-if="failure.request_id"> · RequestId: {{ failure.request_id }}</small>
+							</p></el-collapse-item
+						></el-collapse
+					></el-alert
+				>
+				<div class="toolbar">
+					<div class="toolbar-filters">
+						<el-input
+							v-model="query.keyword"
+							clearable
+							:prefix-icon="Search"
+							:placeholder="pub.lang('搜索名称、实例 ID 或 IP')" />
+						<el-select v-model="query.source"
+							><el-option :label="pub.lang('全部类型')" value="all" /><el-option
+								label="CVM"
+								value="cvm" /><el-option :label="pub.lang('轻量应用服务器')" value="lighthouse"
+						/></el-select>
+						<el-select v-model="query.region" filterable
+							><el-option :label="pub.lang('全部地域')" value="all" /><el-option
+								v-for="region in regions"
+								:key="region.id"
+								:label="region.name"
+								:value="region.id"
+						/></el-select>
+						<el-select v-model="query.status"
+							><el-option :label="pub.lang('全部状态')" value="all" /><el-option
+								v-for="status in statuses"
+								:key="status"
+								:label="pub.lang(statusName(status))"
+								:value="status"
+						/></el-select>
 					</div>
-					<el-tag :type="statusType(server.status)" size="small" effect="plain">{{
+					<div class="toolbar-actions">
+						<el-tooltip :content="pub.lang(showIp ? '隐藏 IP' : '显示 IP')"
+							><el-button :icon="showIp ? Hide : View" @click="showIp = !showIp"
+						/></el-tooltip>
+					</div>
+				</div>
+				<div v-loading="loading" class="server-grid">
+					<article v-for="server in paged" :key="serverKey(server)" class="server-card">
+						<header>
+							<el-icon class="server-icon"><Monitor /></el-icon>
+							<div class="server-name">
+								<strong :title="server.name">{{ server.name }}</strong
+								><small>{{ server.instance_id }}</small>
+							</div>
+							<el-tag :type="statusType(server.status)" size="small" effect="plain">{{
+								pub.lang(
+									powerTasks[serverKey(server)]?.uncertain
+										? '状态待确认'
+										: statusName(server.status)
+								)
+							}}</el-tag>
+						</header>
+						<div class="server-meta">
+							<el-tag size="small" effect="plain">{{
+								server.source === 'cvm' ? 'CVM' : pub.lang('轻量')
+							}}</el-tag
+							><span :title="server.region_id">{{ server.region_name }}</span
+							><span class="os-name" :title="server.os_name">{{ server.os_name || '--' }}</span>
+						</div>
+						<div class="server-specs">
+							<div :title="server.instance_type">
+								<span>{{ pub.lang('配置') }}</span
+								><strong
+									>{{ server.cpu ?? '--' }} {{ pub.lang('核') }} /
+									{{ server.memory_gb ?? '--' }} GB</strong
+								>
+							</div>
+							<div>
+								<span>{{ pub.lang('带宽') }}</span
+								><strong>{{ server.bandwidth_mbps ?? '--' }} Mbps</strong>
+							</div>
+							<div>
+								<span>{{ pub.lang('磁盘') }}</span
+								><strong>{{ server.disk_gb ?? '--' }} GB</strong>
+							</div>
+						</div>
+						<div v-if="showIp" class="server-ips">
+							<div v-for="ip in server.public_ips" :key="`public-${ip}`">
+								<span>{{ pub.lang('公网') }}</span
+								><code>{{ ip }}</code
+								><el-button
+									link
+									:icon="CopyDocument"
+									:title="pub.lang('复制 IP')"
+									@click="copyIp(ip)" />
+							</div>
+							<div v-for="ip in server.private_ips" :key="`private-${ip}`" class="muted">
+								<span>{{ pub.lang('内网') }}</span
+								><code>{{ ip }}</code
+								><el-button
+									link
+									:icon="CopyDocument"
+									:title="pub.lang('复制 IP')"
+									@click="copyIp(ip)" />
+							</div>
+							<span v-if="!server.public_ips.length && !server.private_ips.length" class="muted">{{
+								pub.lang('暂无 IP 地址')
+							}}</span>
+						</div>
+						<TrafficCard
+							:source="server.source"
+							:data="traffic[serverKey(server)]"
+							:loading="trafficLoading.has(serverKey(server))"
+							:error="trafficErrors[serverKey(server)]"
+							@open="openStatistics(server)" />
+						<div v-if="powerTasks[serverKey(server)]" class="operation-note">
+							{{ pub.lang(powerTasks[serverKey(server)].note)
+							}}<el-button
+								link
+								type="primary"
+								:loading="stateLoading.has(serverKey(server))"
+								@click="checkState(server)"
+								>{{ pub.lang('查询状态') }}</el-button
+							>
+						</div>
+						<footer>
+							<span class="server-expiry" :title="pub.lang(chargeName(server.charge_type))"
+								>{{ pub.lang('到期') }} {{ timeText(server.expired_time, true) }}</span
+							>
+							<div class="server-actions">
+								<el-button
+									type="primary"
+									plain
+									size="small"
+									:icon="Monitor"
+									:disabled="server.status !== 'RUNNING'"
+									@click="openServer(server)"
+									>{{ pub.lang('终端') }}</el-button
+								><el-button
+									v-if="server.status === 'STOPPED'"
+									type="success"
+									plain
+									size="small"
+									:disabled="!!powerTasks[serverKey(server)]"
+									@click="openPower(server, 'start')"
+									>{{ pub.lang('开机') }}</el-button
+								><el-button
+									v-else
+									class="power-stop"
+									size="small"
+									:disabled="server.status !== 'RUNNING' || !!powerTasks[serverKey(server)]"
+									@click="openPower(server, 'stop')"
+									>{{ pub.lang('关机') }}</el-button
+								>
+							</div>
+						</footer>
+					</article>
+				</div>
+				<el-empty
+					v-if="!loading && !filtered.length && !error"
+					:description="
 						pub.lang(
-							powerTasks[serverKey(server)]?.uncertain ? '状态待确认' : statusName(server.status)
+							servers.length
+								? '没有匹配的服务器'
+								: partial
+									? '当前未获得服务器数据，请查看失败详情'
+									: '当前账号暂无服务器'
 						)
-					}}</el-tag>
-				</header>
-				<div class="server-meta">
-					<el-tag size="small" effect="plain">{{
-						server.source === 'cvm' ? 'CVM' : pub.lang('轻量')
-					}}</el-tag
-					><span :title="server.region_id">{{ server.region_name }}</span
-					><span class="os-name" :title="server.os_name">{{ server.os_name || '--' }}</span>
+					" />
+				<div v-if="filtered.length > pageSize" class="pagination">
+					<el-pagination
+						v-model:current-page="page"
+						:total="filtered.length"
+						:page-size="pageSize"
+						layout="total, prev, pager, next" />
 				</div>
-				<div class="server-specs">
-					<div :title="server.instance_type">
-						<span>{{ pub.lang('配置') }}</span
-						><strong
-							>{{ server.cpu ?? '--' }} {{ pub.lang('核') }} /
-							{{ server.memory_gb ?? '--' }} GB</strong
-						>
-					</div>
-					<div>
-						<span>{{ pub.lang('带宽') }}</span
-						><strong>{{ server.bandwidth_mbps ?? '--' }} Mbps</strong>
-					</div>
-					<div>
-						<span>{{ pub.lang('磁盘') }}</span
-						><strong>{{ server.disk_gb ?? '--' }} GB</strong>
-					</div>
-				</div>
-				<div v-if="showIp" class="server-ips">
-					<div v-for="ip in server.public_ips" :key="`public-${ip}`">
-						<span>{{ pub.lang('公网') }}</span
-						><code>{{ ip }}</code
-						><el-button
-							link
-							:icon="CopyDocument"
-							:title="pub.lang('复制 IP')"
-							@click="copyIp(ip)" />
-					</div>
-					<div v-for="ip in server.private_ips" :key="`private-${ip}`" class="muted">
-						<span>{{ pub.lang('内网') }}</span
-						><code>{{ ip }}</code
-						><el-button
-							link
-							:icon="CopyDocument"
-							:title="pub.lang('复制 IP')"
-							@click="copyIp(ip)" />
-					</div>
-					<span v-if="!server.public_ips.length && !server.private_ips.length" class="muted">{{
-						pub.lang('暂无 IP 地址')
-					}}</span>
-				</div>
-				<TrafficCard
-					:source="server.source"
-					:data="traffic[serverKey(server)]"
-					:loading="trafficLoading.has(serverKey(server))"
-					:error="trafficErrors[serverKey(server)]"
-					@open="openStatistics(server)" />
-				<div v-if="powerTasks[serverKey(server)]" class="operation-note">
-					{{ pub.lang(powerTasks[serverKey(server)].note)
-					}}<el-button
-						link
-						type="primary"
-						:loading="stateLoading.has(serverKey(server))"
-						@click="checkState(server)"
-						>{{ pub.lang('查询状态') }}</el-button
-					>
-				</div>
-				<footer>
-					<span class="server-expiry" :title="pub.lang(chargeName(server.charge_type))"
-						>{{ pub.lang('到期') }} {{ timeText(server.expired_time, true) }}</span
-					>
-					<div class="server-actions">
-						<el-button
-							type="primary"
-							plain
-							size="small"
-							:icon="Monitor"
-							:disabled="server.status !== 'RUNNING'"
-							@click="openServer(server)"
-							>{{ pub.lang('终端') }}</el-button
-						><el-button
-							v-if="server.status === 'STOPPED'"
-							type="success"
-							plain
-							size="small"
-							:disabled="!!powerTasks[serverKey(server)]"
-							@click="openPower(server, 'start')"
-							>{{ pub.lang('开机') }}</el-button
-						><el-button
-							v-else
-							class="power-stop"
-							size="small"
-							:disabled="server.status !== 'RUNNING' || !!powerTasks[serverKey(server)]"
-							@click="openPower(server, 'stop')"
-							>{{ pub.lang('关机') }}</el-button
-						>
-					</div>
-				</footer>
-			</article>
-		</div>
-		<el-empty
-			v-if="!loading && !filtered.length && !error"
-			:description="
-				pub.lang(
-					servers.length
-						? '没有匹配的服务器'
-						: partial
-							? '当前未获得服务器数据，请查看失败详情'
-							: '当前账号暂无服务器'
-				)
-			" />
-		<div v-if="filtered.length > pageSize" class="pagination">
-			<el-pagination
-				v-model:current-page="page"
-				:total="filtered.length"
-				:page-size="pageSize"
-				layout="total, prev, pager, next" />
-		</div>
 
-		<el-dialog
-			v-model="powerVisible"
-			:title="pub.lang(powerAction === 'start' ? '开机确认' : '关机确认')"
-			width="470px"
-			align-center
-			:close-on-click-modal="false"
-			:close-on-press-escape="!powerSubmitting"
-			:show-close="!powerSubmitting">
-			<template v-if="powerServer"
-				><p>
-					{{ account?.remark }} · {{ pub.lang(account?.site === 'intl' ? '国际站' : '国内站') }}
-				</p>
-				<div class="power-target">
-					<strong>{{ powerServer.name }}</strong
-					><code>{{ powerServer.instance_id }}</code
-					><span>{{
-						powerServer.public_ips.join(' / ') || powerServer.private_ips.join(' / ') || '--'
-					}}</span
-					><small>{{ powerServer.region_name }}</small>
-				</div>
-				<el-alert
-					v-if="powerAction === 'stop'"
-					type="warning"
-					:closable="false"
-					show-icon
-					:title="pub.lang('正常关机会中断此服务器上的业务。')" />
-				<p v-if="powerAction === 'stop'" class="muted">
-					{{
-						pub.lang(
-							powerServer.source === 'cvm'
-								? '使用正常关机，关机继续收费；本次不启用释放计算资源的关机不收费模式。'
-								: '使用正常关机，套餐计费和到期时间不变。'
-						)
-					}}
-				</p></template
-			>
-			<template #footer
-				><el-button :disabled="powerSubmitting" @click="powerVisible = false">{{
-					pub.lang('取消')
-				}}</el-button
-				><el-button
-					:type="powerAction === 'stop' ? 'danger' : 'success'"
-					:loading="powerSubmitting"
-					@click="submitPower"
-					>{{ pub.lang(powerAction === 'start' ? '确认开机' : '确认关机') }}</el-button
-				></template
-			>
-		</el-dialog>
-		<Statistics v-model="statisticsVisible" :account-id="accountId" :server="statisticsServer" />
-		<ServerConnect
-			ref="serverConnectRef"
-			provider="tencent"
-			:account-id="accountId"
-			@connected="launchServerTerminal" />
+				<el-dialog
+					v-model="powerVisible"
+					:title="pub.lang(powerAction === 'start' ? '开机确认' : '关机确认')"
+					width="470px"
+					align-center
+					:close-on-click-modal="false"
+					:close-on-press-escape="!powerSubmitting"
+					:show-close="!powerSubmitting">
+					<template v-if="powerServer"
+						><p>
+							{{ account?.remark }} · {{ pub.lang(account?.site === 'intl' ? '国际站' : '国内站') }}
+						</p>
+						<div class="power-target">
+							<strong>{{ powerServer.name }}</strong
+							><code>{{ powerServer.instance_id }}</code
+							><span>{{
+								powerServer.public_ips.join(' / ') || powerServer.private_ips.join(' / ') || '--'
+							}}</span
+							><small>{{ powerServer.region_name }}</small>
+						</div>
+						<el-alert
+							v-if="powerAction === 'stop'"
+							type="warning"
+							:closable="false"
+							show-icon
+							:title="pub.lang('正常关机会中断此服务器上的业务。')" />
+						<p v-if="powerAction === 'stop'" class="muted">
+							{{
+								pub.lang(
+									powerServer.source === 'cvm'
+										? '使用正常关机，关机继续收费；本次不启用释放计算资源的关机不收费模式。'
+										: '使用正常关机，套餐计费和到期时间不变。'
+								)
+							}}
+						</p></template
+					>
+					<template #footer
+						><el-button :disabled="powerSubmitting" @click="powerVisible = false">{{
+							pub.lang('取消')
+						}}</el-button
+						><el-button
+							:type="powerAction === 'stop' ? 'danger' : 'success'"
+							:loading="powerSubmitting"
+							@click="submitPower"
+							>{{ pub.lang(powerAction === 'start' ? '确认开机' : '确认关机') }}</el-button
+						></template
+					>
+				</el-dialog>
+				<Statistics
+					v-model="statisticsVisible"
+					:account-id="accountId"
+					:server="statisticsServer" />
+				<ServerConnect
+					ref="serverConnectRef"
+					provider="tencent"
+					:account-id="accountId"
+					@connected="launchServerTerminal" />
+			</el-tab-pane>
+			<el-tab-pane
+				:label="`域名 ${resourceCount(account?.resource_summary?.domains)}`"
+				name="domains"
+				lazy
+				><TencentDomains
+					:account-id="accountId"
+					:summary="account?.resource_summary || {}"
+					@updated="reloadAccount"
+			/></el-tab-pane>
+			<el-tab-pane :label="`COS ${resourceCount(account?.resource_summary?.cos)}`" name="cos" lazy
+				><TencentCos
+					:account-id="accountId"
+					:summary="account?.resource_summary || {}"
+					@updated="reloadAccount"
+			/></el-tab-pane>
+			<el-tab-pane :label="`CDN ${resourceCount(account?.resource_summary?.cdn)}`" name="cdn" lazy
+				><TencentEdge
+					:account-id="accountId"
+					product="cdn"
+					:active="activeProduct === 'cdn'"
+					:site="account?.site || 'cn'"
+					:summary="account?.resource_summary || {}"
+					@updated="reloadAccount"
+			/></el-tab-pane>
+			<el-tab-pane
+				:label="`EdgeOne ${resourceCount(account?.resource_summary?.edgeone)}`"
+				name="edgeone"
+				lazy
+				><TencentEdge
+					:account-id="accountId"
+					product="edgeone"
+					:active="activeProduct === 'edgeone'"
+					:site="account?.site || 'cn'"
+					:summary="account?.resource_summary || {}"
+					@updated="reloadAccount"
+			/></el-tab-pane>
+		</el-tabs>
 	</div>
 </template>
 
@@ -314,6 +359,10 @@ import {
 import Statistics from './statistics.vue'
 import TrafficCard from './traffic-card.vue'
 import ServerConnect from '../aliyun/components/server-connect.vue'
+import TencentDomains from './domains.vue'
+import TencentCos from './cos.vue'
+import TencentEdge from './edge.vue'
+import { resourceCount } from './api'
 
 interface PowerTask {
 	action: 'start' | 'stop'
@@ -332,6 +381,11 @@ interface ServerResult {
 }
 const route = useRoute()
 const router = useRouter()
+const activeProduct = ref(
+	['servers', 'domains', 'cos', 'cdn', 'edgeone'].includes(String(route.query.tab))
+		? String(route.query.tab)
+		: 'servers'
+)
 const Message = useMessage()
 const xtermStore = useXtermBase()
 const serverConnectRef = ref<{ open: (server: TencentServer) => Promise<void> }>()
@@ -410,6 +464,10 @@ const chargeNames: Record<string, string> = {
 const chargeName = (type: string) => chargeNames[type] || type || '--'
 
 function queueTraffic(force = false) {
+	if (activeProduct.value !== 'servers') {
+		trafficQueue = []
+		return
+	}
 	const previous = new Map(trafficQueue.map(job => [serverKey(job.server), job.force]))
 	trafficQueue = paged.value
 		.filter(server => {
@@ -637,6 +695,23 @@ function clearTimers() {
 	timers.forEach(timer => clearTimeout(timer))
 	timers.clear()
 }
+async function reloadAccount() {
+	const current = generation,
+		id = accountId.value
+	try {
+		const result = await request<TencentAccount>('find', { account_id: id })
+		if (current === generation && !disposed) account.value = result
+	} catch (_) {
+		/* 子页面各自展示请求错误，概览刷新失败不打断当前操作。 */
+	}
+}
+function changeProduct() {
+	void router.replace({ query: { ...route.query, tab: activeProduct.value } })
+	if (activeProduct.value === 'servers') {
+		if (!refreshTime.value) void loadServers()
+		else queueTraffic()
+	} else trafficQueue = []
+}
 watch(
 	accountId,
 	async id => {
@@ -664,7 +739,12 @@ watch(
 			const result = await request<TencentAccount>('find', { account_id: id })
 			if (current !== generation || disposed) return
 			account.value = result
-			void loadServers()
+			if (activeProduct.value === 'servers') void loadServers()
+			void request<TencentAccount>('probe_resources', { account_id: id })
+				.then(updated => {
+					if (current === generation && !disposed) account.value = updated
+				})
+				.catch(() => {})
 			if (Date.now() / 1000 - result.balance_refresh_time > 300) void refreshBalance()
 		} catch (exception) {
 			if (current === generation)

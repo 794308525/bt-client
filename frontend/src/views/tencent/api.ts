@@ -15,6 +15,7 @@ export interface TencentAccount {
 	lighthouse_count: number
 	server_refresh_time: number
 	server_error: string
+	resource_summary: Record<string, ResourceSummary>
 	sort: number
 }
 export interface TencentGroup {
@@ -75,10 +76,113 @@ export async function request<T = any>(
 	const result: any = await common.sendAsync({
 		route: routes.tencent[action].path,
 		data,
-		timeout: 300000,
+		// 文件选择和持续传输不设总时限，网络停滞由 COS SDK 的超时处理。
+		timeout: action === 'cos_upload' || action === 'cos_download' ? 0 : 300000,
 	})
-	if (!result?.status) throw new Error(result?.msg || '腾讯云请求失败')
+	if (!result?.status) {
+		const error = new Error(result?.msg || '腾讯云请求失败')
+		Object.assign(error, result?.data || {})
+		throw error
+	}
 	return result.data as T
+}
+export interface ResourceSummary {
+	status: string
+	count?: number
+	checked_at: number
+	success_at?: number
+	partial?: boolean
+	error?: {
+		message: string
+		code: string
+		http_code?: number
+		request_id: string
+		action: string
+	} | null
+}
+export interface PageResult<T> {
+	data: T[]
+	total: number
+}
+export type ResourceAction =
+	| 'domain_list'
+	| 'record_list'
+	| 'record_meta'
+	| 'record_change'
+	| 'record_batch'
+	| 'cos_buckets'
+	| 'cos_objects'
+	| 'cos_remove'
+	| 'cdn_list'
+	| 'edge_zones'
+	| 'edge_domains'
+	| 'edge_plans'
+	| 'edge_config'
+	| 'edge_change'
+	| 'ssl_list'
+	| 'cache_submit'
+	| 'cache_tasks'
+	| 'cache_progress'
+	| 'edge_traffic'
+export function resourceRequest<T = any>(
+	action: ResourceAction,
+	data: Record<string, unknown> = {}
+): Promise<T> {
+	return request<T>('resources', { ...data, resource_action: action })
+}
+export const resourceNames: Record<string, string> = {
+	domains: '域名',
+	registration: '注册域名',
+	cos: 'COS',
+	cdn: 'CDN',
+	edgeone: 'EdgeOne',
+}
+export const resourceStatusName = (status?: string) =>
+	(
+		({
+			active: '可用',
+			partial: '部分获取',
+			not_opened: '未开通',
+			permission_denied: '无权限',
+			invalid_credentials: '密钥无效',
+			authentication_error: '认证异常',
+			rate_limited: '限流',
+			quota_exceeded: '配额不足',
+			disabled: '已停用',
+			migrated: '已迁移/迁移中',
+			verification_required: '待认证',
+			unsupported: '暂不支持',
+			network: '网络异常',
+			timeout: '超时',
+			unavailable: '服务异常',
+			error: '获取失败',
+		}) as Record<string, string>
+	)[status || ''] || '待探测'
+export const resourceCount = (summary?: ResourceSummary) =>
+	summary?.status === 'active'
+		? (summary.count ?? '--')
+		: summary?.status === 'partial'
+			? summary.count != null
+				? `${summary.count}+`
+				: '部分可用'
+			: resourceStatusName(summary?.status)
+export function cloudErrorText(error: unknown) {
+	const data = error as {
+		message?: string
+		error_code?: string
+		http_code?: number
+		request_id?: string
+		action?: string
+	}
+	return [
+		data?.message || '请求失败',
+		data?.action,
+		data?.error_code,
+		data?.http_code ? `HTTP ${data.http_code}` : '',
+		data?.request_id ? `RequestId: ${data.request_id}` : '',
+	]
+		.filter(Boolean)
+		.join(' · ')
 }
 export const serverKey = (server: TencentServer) =>
 	`${server.source}:${server.region_id}:${server.instance_id}`

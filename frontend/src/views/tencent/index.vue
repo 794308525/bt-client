@@ -88,23 +88,37 @@
 							<div class="account-logo"><bt-icon name="tencent" size="22" /></div>
 							<div class="account-name">
 								<strong :title="account.remark">{{ account.remark }}</strong>
+								<el-tag size="small" effect="plain">{{
+									account.site === 'intl' ? '国际站' : '国内站'
+								}}</el-tag>
 							</div>
 						</div>
 						<div class="card-actions" @click.stop>
-							<el-tooltip :content="pub.lang('编辑账号')" placement="top">
+							<el-tooltip :content="pub.lang('刷新账号')" :enterable="false" placement="top">
 								<el-button
 									text
-									:icon="EditPen"
-									:aria-label="pub.lang('编辑账号')"
-									@click="openDialog(account)" />
+									:icon="Refresh"
+									:loading="refreshing.has(account.account_id)"
+									:aria-label="pub.lang('刷新账号')"
+									@click="refreshAccount(account, true)" />
 							</el-tooltip>
-							<el-tooltip :content="pub.lang('删除账号')" placement="top">
+							<el-dropdown
+								trigger="click"
+								placement="bottom-end"
+								@command="command => accountCommand(command, account)">
 								<el-button
 									text
-									:icon="Delete"
-									:aria-label="pub.lang('删除账号')"
-									@click="accountCommand('remove', account)" />
-							</el-tooltip>
+									:icon="MoreFilled"
+									:title="pub.lang('更多操作')"
+									:aria-label="pub.lang('更多操作')"
+									@click.stop />
+								<template #dropdown>
+									<el-dropdown-menu>
+										<el-dropdown-item command="edit">{{ pub.lang('编辑') }}</el-dropdown-item>
+										<el-dropdown-item command="remove" divided>{{ pub.lang('删除') }}</el-dropdown-item>
+									</el-dropdown-menu>
+								</template>
+							</el-dropdown>
 						</div>
 					</div>
 				</template>
@@ -112,16 +126,6 @@
 					<strong>{{ money(account) }}</strong>
 					<span class="balance-meta">
 						<span>{{ pub.lang('余额') }} · {{ account.balance_currency }}</span>
-						<el-tooltip :content="pub.lang('刷新账号')" placement="top">
-							<el-button
-								text
-								circle
-								class="balance-refresh"
-								:icon="Refresh"
-								:loading="refreshing.has(account.account_id)"
-								:aria-label="pub.lang('刷新账号')"
-								@click.stop="refreshAccount(account, true)" />
-						</el-tooltip>
 						<small :title="timeText(account.balance_refresh_time)">{{
 							formatRefreshTime(account.balance_refresh_time)
 						}}</small>
@@ -142,12 +146,16 @@
 						<span>{{ pub.lang('轻量') }}</span>
 						<strong>{{ count(account.lighthouse_count) }}</strong>
 					</div>
-					<div>
-						<span>{{ pub.lang('站点') }}</span>
-						<strong class="site-value">{{
-							pub.lang(account.site === 'intl' ? '国际站' : '国内站')
-						}}</strong>
-					</div>
+					<button
+						v-for="product in resourceProducts"
+						:key="product"
+						type="button"
+						class="resource-link"
+						:title="resourceTip(account, product)"
+						@click.stop="openAccount(account, product)">
+						<span>{{ resourceNames[product] }}</span
+						><strong>{{ resourceCount(account.resource_summary?.[product]) }}</strong>
+					</button>
 				</div>
 			</el-card>
 		</div>
@@ -192,6 +200,23 @@
 						pub.lang('按账号注册站点选择，服务器所在地域可包含国内及海外。')
 					}}</small></el-form-item
 				>
+				<el-form-item :label="pub.lang('密钥获取')">
+					<div class="credential-guide">
+						<el-link
+							:href="
+								form.site === 'intl'
+									? 'https://console.tencentcloud.com/cam/capi'
+									: 'https://console.cloud.tencent.com/cam/capi'
+							"
+							target="_blank"
+							rel="noopener noreferrer"
+							type="primary">
+							{{ pub.lang('前往官方控制台获取密钥') }} ↗
+						</el-link>
+						<p class="credential-guide__note">{{ pub.lang('建议使用子账号密钥。') }}</p>
+						<p class="credential-guide__note">{{ pub.lang('Secret 仅在创建时显示，请及时保存。') }}</p>
+					</div>
+				</el-form-item>
 				<el-form-item label="SecretId" prop="secret_id"
 					><el-input
 						:key="'id-' + dialogVisible + '-' + editingId"
@@ -220,7 +245,7 @@
 				></el-form-item>
 			</el-form>
 			<el-collapse
-				><el-collapse-item :title="pub.lang('所需权限与密钥获取')" name="permissions"
+				><el-collapse-item :title="pub.lang('所需权限')" name="permissions"
 					><p>
 						{{
 							pub.lang(
@@ -234,6 +259,17 @@
 						DescribeInstancesTrafficPackages / StartInstances / StopInstances<br />monitor:GetMonitorData
 						<br />vpc:DescribeSecurityGroupPolicies / CreateSecurityGroupPolicies
 						<br />lighthouse:DescribeFirewallRules / CreateFirewallRules
+						<br />dnspod:DescribeDomainList / DescribeDomain / DescribeRecordList /
+						DescribeRecordType / DescribeRecordLineList <br />domain:DescribeDomainNameList
+						<br />cos:GetService / GetBucket / GetObject <br />cdn:DescribeDomains /
+						DescribeDomainsConfig / DescribeCdnData / DescribePurgeTasks / DescribePushTasks
+						<br />teo:DescribeZones / DescribeAccelerationDomains / DescribePlans /
+						DescribeZoneSetting / DescribeDnsRecords / DescribeTimingL7AnalysisData /
+						DescribePurgeTasks / DescribePrefetchTasks
+					</p>
+					<p class="field-note">
+						解析增删改、COS 上传删除、加速启停、源站和 HTTPS
+						修改、缓存刷新预热需另授予对应操作权限；只读探测不会自动开通服务。
 					</p>
 					<p class="field-note">
 						{{
@@ -242,18 +278,8 @@
 							)
 						}}
 					</p>
-					<el-link
-						:href="
-							form.site === 'intl'
-								? 'https://console.tencentcloud.com/cam/capi'
-								: 'https://console.cloud.tencent.com/cam/capi'
-						"
-						target="_blank"
-						type="primary"
-						>{{ pub.lang('前往腾讯云获取密钥') }}</el-link
-					></el-collapse-item
-				></el-collapse
-			>
+				</el-collapse-item>
+			</el-collapse>
 			<template #footer
 				><el-button @click="dialogVisible = false">{{ pub.lang('取消') }}</el-button
 				><el-button
@@ -308,19 +334,41 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Delete, EditPen, Plus, Refresh, Search, Setting } from '@element-plus/icons-vue'
+import { MoreFilled, Plus, Refresh, Search, Setting } from '@element-plus/icons-vue'
 import { ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { pub } from '@utils/tools'
 import { useMessage } from '@utils/hooks/message'
-import { request, money, count, timeText, type TencentAccount, type TencentGroup } from './api'
+import {
+	request,
+	money,
+	count,
+	timeText,
+	resourceCount,
+	resourceNames,
+	type TencentAccount,
+	type TencentGroup,
+} from './api'
 
 const router = useRouter()
+const resourceProducts = ['domains', 'cos', 'cdn', 'edgeone']
+function resourceTip(account: TencentAccount, product: string) {
+	const summary = account.resource_summary?.[product]
+	return [
+		summary?.error?.message || '当前密钥可见资源',
+		summary?.checked_at ? timeText(summary.checked_at) : '待探测',
+		summary?.error?.request_id ? `RequestId: ${summary.error.request_id}` : '',
+	]
+		.filter(Boolean)
+		.join(' · ')
+}
 const Message = useMessage()
 const accounts = ref<TencentAccount[]>([])
 const groups = ref<TencentGroup[]>([])
 const loading = ref(false)
 const refreshing = reactive(new Set<number>())
 const refreshingAll = ref(false)
+const refreshRequests = new Map<number, { force: boolean; promise: Promise<void> }>()
+let backgroundRefreshing = false
 const groupId = ref(-1)
 const siteFilter = ref('all')
 const sortMode = ref('default')
@@ -392,28 +440,46 @@ async function load() {
 	if (!groups.value.some(group => group.group_id === groupId.value)) groupId.value = -1
 }
 async function refreshAccount(account: TencentAccount, force = false) {
-	if (refreshing.has(account.account_id)) return
-	refreshing.add(account.account_id)
+	const accountId = account.account_id
+	if (disposed || (force && refreshing.has(accountId))) return
+	if (force) refreshing.add(accountId)
 	try {
-		const updated = await request<TencentAccount>('refresh_summary', {
-			account_id: account.account_id,
-			force,
-		})
-		const index = accounts.value.findIndex(item => item.account_id === account.account_id)
-		if (!disposed && index >= 0) accounts.value[index] = updated
-	} catch (error) {
-		if (!disposed) showError(error)
+		const pending = refreshRequests.get(accountId)
+		if (pending) {
+			await pending.promise
+			if (disposed || !force || pending.force) return
+		}
+		const promise: Promise<void> = request<TencentAccount>('refresh_summary', { account_id: accountId, force })
+			.then(updated => {
+				const index = accounts.value.findIndex(item => item.account_id === accountId)
+				if (!disposed && index >= 0) accounts.value[index] = updated
+			})
+			.catch(error => {
+				if (!disposed) showError(error)
+			})
+			.finally(() => {
+				if (refreshRequests.get(accountId)?.promise === promise) refreshRequests.delete(accountId)
+			})
+		refreshRequests.set(accountId, { force, promise })
+		await promise
 	} finally {
-		refreshing.delete(account.account_id)
+		if (force) refreshing.delete(accountId)
 	}
 }
 async function refreshAll(force = false) {
-	if (refreshingAll.value) return
-	refreshingAll.value = true
+	if (force ? refreshingAll.value : backgroundRefreshing) return
+	if (force) refreshingAll.value = true
+	else backgroundRefreshing = true
 	const queue = accounts.value.filter(
 		account =>
 			force ||
-			Date.now() / 1000 - Math.min(account.balance_refresh_time, account.server_refresh_time) > 300
+			Date.now() / 1000 -
+				Math.min(
+					account.balance_refresh_time,
+					account.server_refresh_time,
+					...resourceProducts.map(product => account.resource_summary?.[product]?.checked_at || 0)
+				) >
+				300
 	)
 	try {
 		await Promise.all(
@@ -425,7 +491,8 @@ async function refreshAll(force = false) {
 			})
 		)
 	} finally {
-		refreshingAll.value = false
+		if (force) refreshingAll.value = false
+		else backgroundRefreshing = false
 	}
 }
 const readCredentials = (accountId: number) =>
@@ -502,8 +569,8 @@ async function accountCommand(command: string, account: TencentAccount) {
 		showError(error)
 	}
 }
-function openAccount(account: TencentAccount) {
-	router.push(`/tencent/${account.account_id}`)
+function openAccount(account: TencentAccount, product = 'servers') {
+	router.push({ path: `/tencent/${account.account_id}`, query: { tab: product } })
 }
 async function dropAccount(id: number) {
 	if (!canSort.value || !draggedId.value || id === draggedId.value) return
@@ -686,6 +753,7 @@ onBeforeUnmount(() => {
 		height: 2.6rem;
 		padding: 0 1.1rem;
 		border: 0 !important;
+		outline: 0 !important;
 		border-radius: 999px !important;
 		color: var(--el-text-color-regular);
 		line-height: 2.6rem;
@@ -697,8 +765,8 @@ onBeforeUnmount(() => {
 		font-weight: 600;
 		background: var(--el-color-primary) !important;
 	}
-	:deep(.el-radio-button__original:focus-visible + .el-radio-button__inner) {
-		outline: 2px solid var(--el-color-primary);
+	:deep(.el-radio-button__original-radio:focus-visible + .el-radio-button__inner) {
+		outline: 2px solid var(--el-color-primary) !important;
 		outline-offset: -2px;
 	}
 }
@@ -772,15 +840,18 @@ onBeforeUnmount(() => {
 	display: flex;
 	flex: 0 0 auto;
 	align-items: center;
-	gap: 0.2rem;
+	gap: 0.4rem;
 	margin-left: auto;
 
 	.el-button {
-		width: 2.8rem;
-		height: 2.8rem;
+		width: 3rem;
+		height: 3rem;
 		margin: 0;
 		padding: 0;
-		color: var(--el-text-color-secondary);
+		border: 1px solid var(--el-border-color);
+		border-radius: 0.5rem;
+		background: transparent;
+		color: var(--el-text-color-regular);
 	}
 }
 .account-name {
@@ -799,7 +870,7 @@ onBeforeUnmount(() => {
 	display: flex;
 	min-width: 0;
 	align-items: flex-start;
-	padding: 0.8rem 0 1.1rem;
+	padding: 0 0 1.1rem;
 	flex-direction: column;
 
 	strong {
@@ -836,14 +907,6 @@ onBeforeUnmount(() => {
 		font-style: normal;
 	}
 }
-.balance-refresh {
-	width: 2.2rem;
-	height: 2.2rem;
-	flex-shrink: 0;
-	margin-left: 0.15rem;
-	padding: 0;
-	vertical-align: middle;
-}
 .resource-counts {
 	display: grid;
 	grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -852,11 +915,27 @@ onBeforeUnmount(() => {
 	padding: 1.1rem 0;
 	border-top: 1px solid var(--el-border-color-lighter);
 
-	> div {
+	> div,
+	> button {
 		display: grid;
 		min-width: 0;
 		align-items: center;
 		row-gap: 0.4rem;
+	}
+	.resource-link {
+		border: 0;
+		padding: 0;
+		color: inherit;
+		font: inherit;
+		text-align: left;
+		background: transparent;
+		cursor: pointer;
+		&:hover strong {
+			color: var(--el-color-primary);
+		}
+		strong {
+			font-size: 1.35rem;
+		}
 	}
 	span {
 		color: var(--el-text-color-secondary);
@@ -873,6 +952,15 @@ onBeforeUnmount(() => {
 		font-weight: 500;
 		white-space: nowrap;
 	}
+}
+.credential-guide {
+	width: 100%;
+}
+.credential-guide__note {
+	margin: 0.4rem 0 0;
+	color: var(--el-text-color-secondary);
+	font-size: 1.2rem;
+	line-height: 1.7;
 }
 .field-note {
 	display: block;

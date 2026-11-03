@@ -4,11 +4,14 @@ const { Controller } = require('ee-core');
 const { pub } = require('../class/public.js');
 const { tencentService, errorOf } = require('../service/tencent');
 const { tencentSshService } = require('../service/tencent-ssh');
+const { dialog, BrowserWindow } = require('electron');
+const path = require('path');
+const { bucketScope, objectKey } = require('../service/tencent-cos');
 
 function sendError(event, channel, error) {
   const normalized = errorOf(error);
   return pub.send(event, channel, { status: false, msg: normalized.message,
-    data: { error_code: normalized.code, request_id: normalized.requestId } });
+    data: { error_code: normalized.code, http_code: normalized.httpCode, request_id: normalized.requestId, resource_status: normalized.resource_status, action: normalized.action } });
 }
 const dataOf = args => args.data || {};
 function nameOf(value, label, limit) {
@@ -21,8 +24,8 @@ class TencentController extends Controller {
   async list(args, event) {
     try {
       const accounts = pub.M('tencent_account')
-        .field('account_id,group_id,remark,site,secret_id,balance,balance_currency,balance_refresh_time,balance_error,server_count,cvm_count,lighthouse_count,server_refresh_time,server_error,sort,addtime,update_time')
-        .order('sort DESC, account_id DESC').select();
+        .field('account_id,group_id,remark,site,secret_id,balance,balance_currency,balance_refresh_time,balance_error,server_count,cvm_count,lighthouse_count,server_refresh_time,server_error,resource_summary,sort,addtime,update_time')
+        .order('sort DESC, account_id DESC').select().map(account => tencentService.safeAccount(account));
       const groups = [{ group_id: -1, group_name: '全部' }, { group_id: 0, group_name: '默认' }, ...pub.M('tencent_group').order('group_id ASC').select()]
         .map(group => ({ ...group, account_count: accounts.filter(account => group.group_id === -1 || account.group_id === group.group_id).length }));
       return pub.send_success(event, args.channel, { data: accounts, groups });
@@ -62,7 +65,7 @@ class TencentController extends Controller {
       const now = pub.time();
       const fields = { remark, site, group_id: groupId, secret_id: secretId, secret_key: secretKey, update_time: now };
       if (changed) Object.assign(fields, { balance: '', balance_currency: site === 'intl' ? 'USD' : 'CNY', balance_refresh_time: 0,
-        balance_error: '', server_count: -1, cvm_count: -1, lighthouse_count: -1, server_refresh_time: 0, server_error: '' });
+        balance_error: '', server_count: -1, cvm_count: -1, lighthouse_count: -1, server_refresh_time: 0, server_error: '', resource_summary: '{}' });
       const result = id ? pub.M('tencent_account').where('account_id=?', id).update(fields)
         : pub.M('tencent_account').insert({ ...fields, sort: pub.M('tencent_account').count() + 1, addtime: now });
       if (!result) throw new Error('账号保存失败');
@@ -125,6 +128,34 @@ class TencentController extends Controller {
   }
   async refresh_balance(args, event) { return this.run(args, event, data => tencentService.refreshBalance(data.account_id)); }
   async refresh_summary(args, event) { return this.run(args, event, data => tencentService.refreshSummary(data.account_id, data.force === true)); }
+  async probe_resources(args, event) { return this.run(args, event, data => tencentService.resources.probe(data.account_id, data.force === true, data.product)); }
+  async resources(args, event) { return this.run(args, event, data => tencentService.resources.run(data.account_id, data.resource_action, data)); }
+  async cos_upload(args, event) {
+    return this.run(args, event, async data => {
+      const account = tencentService.getAccount(data.account_id);
+      const scope = bucketScope(data);
+      const prefix = objectKey(data.prefix, true);
+      const parent = BrowserWindow.fromWebContents(event.sender);
+      const selected = await dialog.showOpenDialog(parent, { title: '选择上传到 COS 的文件', properties: ['openFile', 'multiSelections'] });
+      if (selected.canceled || !selected.filePaths.length) return { canceled: true };
+      const confirm = await dialog.showMessageBox(parent, { type: 'question', title: '确认上传至 COS', message: `上传 ${selected.filePaths.length} 个文件至 ${scope.Bucket}`, detail: `账号：${account.remark}\n目录：${prefix || '/'}\n同名文件将被覆盖。`, buttons: ['取消', '上传'], defaultId: 0, cancelId: 0 });
+      if (confirm.response !== 1) return { canceled: true };
+      if (!tencentService.isCurrent(account)) throw new Error('账号凭据已变更，请重新选择上传目标');
+      return { canceled: false, ...await tencentService.resources.cos.upload(account, data, selected.filePaths) };
+    });
+  }
+  async cos_download(args, event) {
+    return this.run(args, event, async data => {
+      const account = tencentService.getAccount(data.account_id);
+      bucketScope(data);
+      const name = objectKey(data.object_name);
+      const selected = await dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender), { title: '保存 COS 文件', defaultPath: path.basename(name) || 'download' });
+      if (selected.canceled || !selected.filePath) return { canceled: true };
+      if (!tencentService.isCurrent(account)) throw new Error('账号凭据已变更，请重新选择下载目标');
+      await tencentService.resources.cos.download(account, data, path.resolve(selected.filePath));
+      return { canceled: false };
+    });
+  }
   async server_list(args, event) { return this.run(args, event, data => tencentService.listServers(data.account_id, data.force === true)); }
   async server_traffic(args, event) { return this.run(args, event, data => tencentService.traffic(data.account_id, data, data.force === true)); }
   async server_statistics(args, event) { return this.run(args, event, data => tencentService.statistics(data.account_id, data, Number(data.days || 1), data.force === true)); }
