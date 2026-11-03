@@ -1,5 +1,9 @@
 <template>
-	<div></div>
+	<div class="panel-opening" v-loading="activePanel?.loading" :element-loading-text="activePanel?.loadingText">
+		<el-empty v-if="activePanel?.error" :description="activePanel.error">
+			<el-button type="primary" @click="retryPanel">{{ pub.lang('重试') }}</el-button>
+		</el-empty>
+	</div>
 </template>
 
 <script setup lang="ts">
@@ -18,7 +22,7 @@ const router = useRouter()
 const Message = useMessage() // 消息提示
 const xBounds = 0 // x轴偏移量
 const yBounds = 40 // y轴偏移量
-let openAttempt = 0
+const activePanel = computed(() => panelList.value.find(item => item.key === panelActive.value))
 
 // 获取当前key
 const getCurrentRefKey = () => {
@@ -27,7 +31,7 @@ const getCurrentRefKey = () => {
 }
 // 显示视图
 const showPanelView = () => {
-	common.send(routes.window.show.path, { view_key: getCurrentRefKey() }, (res: any) => {
+	common.send(routes.window.show.path, { view_key: getCurrentRefKey(), pending: activePanel.value?.loading || !!activePanel.value?.error }, (res: any) => {
 		// 设置位置
 		panelViewBounds()
 	})
@@ -72,7 +76,7 @@ const onPanelSwitch = (index: any) => {
 	panelActive.value = key
 	showPanelView()
 	if (route.path.indexOf('details') === -1) {
-		router.push(`/details/${currentTab.id}&${index}`)
+		router.push(`/details/${currentTab.id}&${key}`)
 		return false
 	}
 }
@@ -103,18 +107,9 @@ const createChildView = (item: any) => {
 				vertical: true,
 			},
 			proxy_id: item.proxy_id,
+			show: router.currentRoute.value.name === 'details' && panelActive.value === item.key,
 		},
 		timeout: 25000,
-	})
-}
-
-const restorePreviousPanel = (previousActiveKey: string) => {
-	const previousPanel = panelList.value.find((item: any) => item.key === previousActiveKey)
-	if (!previousPanel) return router.replace('/home')
-	panelActive.value = previousPanel.key
-	return router.replace({
-		name: 'details',
-		params: { id: previousPanel.id, key: previousPanel.key },
 	})
 }
 
@@ -123,24 +118,40 @@ const initPanel = async () => {
 	const id = Array.isArray(route.params.id) ? route.params.id[0] : route.params.id
 	const key = String(Array.isArray(route.params.key) ? route.params.key[0] : route.params.key)
 
-	// 情况一：key是否已经存在（当处于其他路由切换回details时）
-	if(panelList.value.length > 0 && panelList.value.find((item: any) => item.key === key)){
+	const existingPanel = panelList.value.find(item => item.key === key)
+	if (existingPanel) {
 		panelActive.value = key
 		showPanelView()
 		return
 	}
 
-	const attempt = ++openAttempt
-	const previousActiveKey = panelActive.value
-	const load = Message.load(pub.lang('正在创建面板应用'))
+	const panel = reactive({
+		id, key, url: '', label: pub.lang('正在连接面板'), proxy_id: 0,
+		loading: true, loadingText: pub.lang('正在获取面板信息'), error: '',
+		favico: () => ' ',
+	})
+	createPanel(panel)
+	await nextTick()
+	showPanelView()
+	await openPanel(panel)
+}
+
+// 连接任务随页签保留；切换页面不取消，关闭页签后不再创建网页。
+const openPanel = async (panel: any) => {
+	const { id, key } = panel
+	const isOpen = () => panelList.value.some(item => item.key === key)
 	try {
+		if (!isOpen()) return
 		const info: any = await common.sendAsync({
 			route: routes.panel.find.path,
 			data: { panel_id: id },
 			timeout: 5000,
 		})
 		if (!info?.status || !info.data) throw new Error(info?.msg || pub.lang('获取面板信息失败'))
-		if (attempt !== openAttempt) return
+		if (!isOpen()) return
+		panel.label = info.data.title
+		panel.proxy_id = info.data.proxy_id
+		panel.loadingText = pub.lang('正在获取面板登录地址')
 
 		const tokenResult: any = await common.sendAsync({
 			route: routes.panel.get_tmp_token.path,
@@ -150,22 +161,15 @@ const initPanel = async () => {
 		if (!tokenResult?.status || !tokenResult.data) {
 			throw new Error(tokenResult?.msg || pub.lang('获取面板登录地址失败'))
 		}
-		if (attempt !== openAttempt) return
-
-		const panel = {
-			id,
-			url: tokenResult.data,
-			label: info.data.title,
-			proxy_id: info.data.proxy_id,
-			key,
-			favico: () => ' ',
-		}
+		if (!isOpen()) return
+		panel.url = tokenResult.data
+		panel.loadingText = pub.lang('正在加载面板页面')
 		const createResult: any = await createChildView(panel)
 		if (!createResult?.status || createResult.data?.view_key !== key) {
 			throw new Error(createResult?.msg || pub.lang('面板窗口创建失败'))
 		}
 
-		if (attempt !== openAttempt) {
+		if (!isOpen()) {
 			common.sendAsync({
 				route: routes.window.destroy.path,
 				data: { view_key: key },
@@ -173,14 +177,23 @@ const initPanel = async () => {
 			}).catch(() => {})
 			return
 		}
-		createPanel(panel)
 	} catch (error: any) {
-		if (attempt !== openAttempt) return
-		Message.error(error?.message || pub.lang('面板打开失败'))
-		await restorePreviousPanel(previousActiveKey)
+		if (!isOpen()) return
+		common.sendAsync({ route: routes.window.destroy.path, data: { view_key: key }, timeout: 5000 }).catch(() => {})
+		panel.error = error?.message || pub.lang('面板打开失败')
+		if (panelActive.value === key && router.currentRoute.value.name === 'details') Message.error(panel.error)
 	} finally {
-		load.close()
+		panel.loading = false
 	}
+}
+
+const retryPanel = () => {
+	const panel = activePanel.value
+	if (!panel || panel.loading) return
+	panel.error = ''
+	panel.loading = true
+	panel.loadingText = pub.lang('正在获取面板信息')
+	openPanel(panel)
 }
 
 initPanel()
@@ -196,14 +209,15 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-	openAttempt++
 	ipc.removeAllListeners('panel-switch')
-	common.send(routes.window.list.path, {}, (res: any) => {
-		res.data.forEach((item: any) => {
-			common.send(routes.window.hide.path, { view_key: item }, (result: any) => {
-				panelActive.value = ''
-			})
-		})
-	})
+	if (router.currentRoute.value.name === 'details') return
+	panelList.value.forEach(item => common.send(routes.window.hide.path, { view_key: item.key }))
+	panelActive.value = ''
 })
 </script>
+
+<style scoped>
+.panel-opening {
+	min-height: calc(100vh - var(--app-titlebar-height, 40px));
+}
+</style>

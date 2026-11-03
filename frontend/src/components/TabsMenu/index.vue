@@ -19,7 +19,8 @@
 					<svg t="1733121642503" class="tabs-close-icon p-[.2rem]" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="7382" width="10" height="10"><path d="M621.312 493.824l253.184-252.928a67.584 67.584 0 0 0 7.168-89.088 64.512 64.512 0 0 0-95.744-4.864l-256 256a25.6 25.6 0 0 1-36.352 0l-252.672-253.44a67.584 67.584 0 0 0-89.088-7.168 64.512 64.512 0 0 0-4.864 95.744l256 256a25.6 25.6 0 0 1 0 36.352l-253.44 252.672a67.584 67.584 0 0 0-7.168 89.088 64.512 64.512 0 0 0 95.744 4.864l256-256a25.6 25.6 0 0 1 36.352 0l252.928 253.184a67.584 67.584 0 0 0 89.088 7.168 64.512 64.512 0 0 0 4.864-95.744l-256-256a25.6 25.6 0 0 1 0-35.84z" p-id="7383" fill="currentColor"></path></svg>
 				</div>
 				<div class="tabs-main" :title="tab.label">
-					<span class="tabs-favico" v-if="tab.favico">
+					<span class="tabs-favico tabs-loading" v-if="tab.loading"></span>
+					<span class="tabs-favico" v-else-if="tab.favico">
 						<render-temp v-if="typeof tab.favico === 'function'" :render="tab.favico" :params="[tab, i]" />
 						<img v-else-if="tab.favico" :src="tab.favico" alt="" />
 					</span>
@@ -48,6 +49,8 @@ export interface Tab {
 	/** 唯一 key */
 	key: string;
 	favico?: FavicoType;
+	loading?: boolean;
+	error?: string;
 	/**
 	 * 是否可关闭
 	 */
@@ -439,7 +442,7 @@ export default defineComponent({
 		 */
 		const showTabRefreshIcon = (tab: Tab) => {
 			const { modelValue } = props;
-			return tab.key === modelValue;
+			return tab.key === modelValue && !tab.loading && !tab.error;
 		};
 
 		/**
@@ -579,6 +582,18 @@ export default defineComponent({
 </script>
 
 <style lang="scss">
+.vue3-tabs-chrome .tabs-favico.tabs-loading {
+	box-sizing: border-box;
+	background: none;
+	border: 2px solid var(--el-border-color);
+	border-top-color: var(--el-color-primary);
+	border-radius: 50%;
+	animation: panel-tab-loading 0.8s linear infinite;
+}
+@keyframes panel-tab-loading {
+	to { transform: rotate(360deg); }
+}
+
 .vue3-tabs-chrome {
 	$bg: #d3e3fd;
 	$gap: 7px;

@@ -392,7 +392,7 @@ const router = useRouter()
 const Message = useMessage() // 消息提示
 
 const useStore = useSettingStore()
-const { mainHeight } = storeToRefs(useStore)
+const { mainHeight, panelList } = storeToRefs(useStore)
 
 const {
 	isShowIP,
@@ -863,9 +863,10 @@ const openPanelView = (item: any, ev?: any) => {
 			return
 		}
 	}
+	const existingPanel = panelList.value.find(panel => String(panel.id) === String(item.panel_id))
 	router.push({
 		name: 'details',
-		params: { id: item.panel_id,key:new Date().getTime() },
+		params: { id: item.panel_id, key: existingPanel?.key || String(Date.now()) },
 	})
 }
 // 删除面板

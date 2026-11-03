@@ -50,6 +50,13 @@ class WindowController extends Controller {
         }
     }
 
+    // macOS 的坐标依赖父窗口，延迟挂载的视图必须在挂载后重新设置尺寸。
+    attachPanelView(mainWindow, panelView) {
+        mainWindow.setBrowserView(panelView);
+        if (panelView.view_bounds) panelView.setBounds(panelView.view_bounds);
+        if (panelView.auto_resize) panelView.setAutoResize(panelView.auto_resize);
+    }
+
 
 
     /**
@@ -72,6 +79,7 @@ class WindowController extends Controller {
         const view_key = args.data.view_key;
         let options = args.data.options;
         const proxy_id = args.data.proxy_id || 0;
+        const show = args.data.show !== false;
 
         const mainWindow = Electron.mainWindow;
         if (!mainWindow) return pub.send_error(event, channel, pub.lang('主窗口不存在'));
@@ -80,7 +88,11 @@ class WindowController extends Controller {
             if (!global.PanelViews[view_key].loaded) {
                 return pub.send_error(event, channel, pub.lang('视图正在创建，请稍候'));
             }
-            mainWindow.setBrowserView(global.PanelViews[view_key]);
+            if (show) {
+                ShowKey = view_key;
+                global.PanelViews[view_key].is_show = true;
+                this.attachPanelView(mainWindow, global.PanelViews[view_key]);
+            }
             return pub.send_success(event, channel, { view_key: view_key, existing: true });
         }
 
@@ -89,43 +101,28 @@ class WindowController extends Controller {
 
         const panelView = new BrowserView(options);
         global.PanelViews[view_key] = panelView;
-        panelView.is_show = true;
+        panelView.is_show = show;
         panelView.loaded = false;
         panelView.view_key = view_key;
-        ShowKey = view_key;
-
-        mainWindow.setBrowserView(panelView);
+        if (show) {
+            ShowKey = view_key;
+            this.hide_load();
+            // 等待期间由前端显示加载状态，网页就绪后再附加视图。
+            mainWindow.setBrowserView(null);
+        }
         if (bounds && bounds.x !== undefined) {
             bounds.x = parseInt(bounds.x);
             bounds.y = parseInt(bounds.y);
             bounds.width = parseInt(bounds.width);
             bounds.height = parseInt(bounds.height) + 1;
+            panelView.view_bounds = { ...bounds };
             panelView.setBounds(bounds);
         }
-        if (auto_resize) panelView.setAutoResize(auto_resize);
+        if (auto_resize) {
+            panelView.auto_resize = auto_resize;
+            panelView.setAutoResize(auto_resize);
+        }
         Services.get('window').setEvent(panelView, proxy_id);
-
-        if (!LoadView) {
-            try {
-                await this.load(options);
-            } catch (error) {
-                LoadView = null;
-            }
-        }
-        if (LoadView) {
-            mainWindow.setBrowserView(LoadView);
-            LoadView.is_show = true;
-            if (bounds) {
-                LoadView.setBounds({
-                    x: parseInt(bounds.x),
-                    y: parseInt(bounds.y),
-                    width: parseInt(bounds.width),
-                    height: parseInt(bounds.height)
-                });
-            }
-            if (auto_resize) LoadView.setAutoResize(auto_resize);
-            mainWindow.removeBrowserView(panelView);
-        }
 
         let settled = false;
         let loadTimer = null;
@@ -166,7 +163,7 @@ class WindowController extends Controller {
             }
 
             panelView.loaded = true;
-            if (panelView.is_show && ShowKey == view_key) mainWindow.setBrowserView(panelView);
+            if (panelView.is_show && ShowKey == view_key) this.attachPanelView(mainWindow, panelView);
             return pub.send_success(event, channel, {
                 view_key: view_key,
                 url: panelView.webContents.getURL()
@@ -185,7 +182,10 @@ class WindowController extends Controller {
             dialog.showErrorBox(pub.lang('页面加载失败，{}', message), pub.lang('错误码：{}，错误描述：{}', errorCode, errorDescription));
         });
 
+        // 文档就绪即可展示，不再等待图片等后续资源全部加载。
+        panelView.webContents.on('dom-ready', () => finishCreate(true));
         panelView.webContents.on('did-finish-load', () => finishCreate(true));
+        panelView.webContents.once('destroyed', () => finishCreate(false, pub.lang('面板已关闭')));
         loadTimer = setTimeout(() => {
             finishCreate(false, pub.lang('面板页面加载超时'));
         }, 20000);
@@ -259,16 +259,13 @@ class WindowController extends Controller {
     async show(args, event) {
         let channel = args.channel;
         let view_key = args.data.view_key;
+        const mainWindow = Electron.mainWindow;
+        if (!mainWindow) return pub.send_error(event, channel, pub.lang('主窗口不存在'));
 
         if (global.PanelViews[view_key]) {
-            // 获取主窗口
-            let mainWindow = Electron.mainWindow;
-            if (!mainWindow) {
-                return pub.send_error(event, channel, pub.lang('主窗口不存在'));
-            }
             // 显示视图
             if (global.PanelViews[view_key].loaded) {
-                mainWindow.setBrowserView(global.PanelViews[view_key]);
+                this.attachPanelView(mainWindow, global.PanelViews[view_key]);
                 if(global.PanelViews[view_key].searchViewObj) {
                     mainWindow.addBrowserView(global.PanelViews[view_key].searchViewObj);
                 }
@@ -280,10 +277,19 @@ class WindowController extends Controller {
                 global.PanelViews[view_key].webContents.focus();
                 
             } else {
+                global.PanelViews[view_key].is_show = true;
                 ShowKey = view_key;
-                this.show_load();
+                this.hide_load();
+                mainWindow.setBrowserView(null);
             }
             return pub.send_success_msg(event, channel, pub.lang('视图已显示'));
+        }
+
+        if (args.data.pending) {
+            this.hide_load();
+            mainWindow.setBrowserView(null);
+            ShowKey = view_key;
+            return pub.send_success_msg(event, channel, pub.lang('正在连接面板'));
         }
 
         return pub.send_error(event, channel, pub.lang('视图不存在'));
@@ -381,6 +387,7 @@ class WindowController extends Controller {
             bounds.y = parseInt(bounds.y);
             bounds.width = parseInt(bounds.width);
             bounds.height = parseInt(bounds.height) + 1;
+            global.PanelViews[view_key].view_bounds = { ...bounds };
             global.PanelViews[view_key].setBounds(bounds);
             if (LoadView) LoadView.setBounds(bounds);
             // Log.info('set bounds:', view_key, bounds);
@@ -406,6 +413,7 @@ class WindowController extends Controller {
         let auto_resize = args.data.auto_resize;
 
         if (global.PanelViews[view_key]) {
+            global.PanelViews[view_key].auto_resize = auto_resize;
             global.PanelViews[view_key].setAutoResize(auto_resize);
             if (LoadView) LoadView.setAutoResize(auto_resize);
             // Log.info('set auto resize:', view_key, auto_resize);

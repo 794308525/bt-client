@@ -4,6 +4,9 @@ interface PanelParams {
 	key: string
 	id: number
 	favico?: string | (() => string)
+	loading?: boolean
+	loadingText?: string
+	error?: string
 }
 export const useSettingStore = defineStore('settingStore', {
 	state: () => {

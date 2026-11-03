@@ -72,6 +72,7 @@ const endTips = ref('')
 const showLoginPopover = ref(false)
 
 const openMenu = (event: MouseEvent, tab: any) => {
+	if (tab.loading || tab.error) return
 	common.send(routes.window.set_tab_context_menu.path, {
 		key: tab.key,
 		type: 'rightClick',
@@ -126,7 +127,8 @@ const showPanelView = (event?: Event, tab?: any, index?: number) => {
 		router.push(`/details/${tab.id}&${tab.key}`)
 		return false
 	}
-	common.send(routes.window.show.path, { view_key: panelActive.value }, (res: any) => {})
+	const currentPanel = panelList.value.find(item => item.key === panelActive.value)
+	common.send(routes.window.show.path, { view_key: panelActive.value, pending: currentPanel?.loading || !!currentPanel?.error }, (res: any) => {})
 	panelViewBounds()
 }
 // 设置视图位置
