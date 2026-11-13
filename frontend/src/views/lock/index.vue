@@ -1,7 +1,6 @@
 <template>
 	<div class="lock-container">
-		<el-card class="lock-wrapper">
-			<template v-if="status">
+		<el-card v-if="status" class="lock-wrapper">
 				<div class="flex items-center justify-center mb-10">
 					<svg
 						t="1723520077767"
@@ -37,44 +36,43 @@
 						pub.lang('解锁')
 					}}</el-button>
 				</div>
-			</template>
-			<template v-else>
-				<span class="locked text-[3rem] text-[#000]">{{ pub.lang('请设置管理密码') }}</span>
+			<LegalDocuments class="lock-legal" />
+		</el-card>
+		<el-dialog v-else v-model="setupVisible" :title="pub.lang('设置管理密码')" width="440px" align-center :show-close="false" :close-on-click-modal="false" :close-on-press-escape="false">
+				<p>{{ pub.lang('设置管理密码后，每次打开应用时需要输入密码。也可以暂不设置，以后在设置中启用。') }}</p>
 				<div class="password-input">
-					<el-form ref="pwRef" :model="setPassword" :rules="rule">
+					<el-form ref="pwRef" :model="setPassword" :rules="rule" @submit.prevent>
 						<el-form-item prop="password1">
 							<el-input
 								v-model="setPassword.password1"
 								prefix-icon="Lock"
-								type="password"
+								:type="showSetupPassword ? 'text' : 'password'"
 								autofocus
-								show-password
 								size="large"
 								:placeholder="pub.lang('请输入管理密码')"
-								@keydown.enter="setLock" />
+								@keydown.enter.prevent="setLock" />
 						</el-form-item>
 						<el-form-item prop="password2">
 							<el-input
 								v-model="setPassword.password2"
 								prefix-icon="Lock"
-								type="password"
-								show-password
+								:type="showSetupPassword ? 'text' : 'password'"
 								size="large"
 								:placeholder="pub.lang('确认管理密码')"
-								@keydown.enter="setLock" />
+								@keydown.enter.prevent="setLock" />
 						</el-form-item>
-						<el-button type="primary" @click="setLock" size="large" class="w-full">{{
-							pub.lang('确认')
-						}}</el-button>
 					</el-form>
+					<el-checkbox v-model="showSetupPassword">{{ pub.lang('显示密码') }}</el-checkbox>
 					<div class="tips-head text-[1.6rem]">
 						<li>{{ pub.lang('每次打开程序所需的解锁步骤') }}</li>
 						<li>{{ pub.lang('管理密码无法找回，请妥善保管') }}</li>
 					</div>
 				</div>
-			</template>
-			<LegalDocuments class="lock-legal" />
-		</el-card>
+				<template #footer>
+					<el-button :disabled="saving" @click="skipLock">{{ pub.lang('暂不设置') }}</el-button>
+					<el-button type="primary" :loading="saving" @click="setLock">{{ pub.lang('设置密码') }}</el-button>
+				</template>
+		</el-dialog>
 	</div>
 </template>
 
@@ -93,6 +91,9 @@ const Message = useMessage() // 消息提示
 const { isSetAdminPassword, passwordIsRight, routerHistory } = storeToRefs(useStore)
 
 const status = toRaw(isSetAdminPassword)
+const setupVisible = ref(true)
+const saving = ref(false)
+const showSetupPassword = ref(true)
 
 const password = ref('')
 const pwRef = ref()
@@ -123,20 +124,29 @@ const rule = {
 
 const setLock = async () => {
 	await pwRef.value.validate()
-	common.send(
-		routes.index.set_password.path,
-		{ password: toRaw(setPassword.password1) },
-		(res: any) => {
-			if (res.status) {
-				Message.success(res.msg)
-				isSetAdminPassword.value = res.status
-				passwordIsRight.value = true
-				router.push({ path: '/home' } as RouteLocationRaw)
-			} else {
-				Message.request(res)
-			}
-		}
-	)
+	await finishSetup(routes.index.set_password.path, { password: setPassword.password1 })
+}
+
+const skipLock = async () => {
+	await finishSetup(routes.index.skip_password.path, {})
+}
+
+const finishSetup = async (route: string, data: any) => {
+	if (saving.value) return
+	saving.value = true
+	try {
+		const res: any = await common.sendAsync({ route, data, timeout: 30000 })
+		if (!res?.status) return Message.request(res)
+		setupVisible.value = false
+		isSetAdminPassword.value = true
+		passwordIsRight.value = true
+		await nextTick()
+		await router.push({ path: '/home' } as RouteLocationRaw)
+	} catch (_) {
+		Message.error(pub.lang('设置失败，请重试'))
+	} finally {
+		saving.value = false
+	}
 }
 
 const unlock = () => {

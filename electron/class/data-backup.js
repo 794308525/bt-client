@@ -153,6 +153,13 @@ function decodeBackup(envelope, password = '') {
 }
 
 async function captureData(dataDir, appVersion, sourceLabel = '寰宇运维') {
+  const assertPasswordReady = () => {
+    const paths = access()?.paths;
+    if (paths?.coordinationDir && fs.existsSync(path.join(paths.coordinationDir, 'password-change.json'))) {
+      throw new Error('密码设置尚未恢复，请重新打开应用');
+    }
+  };
+  assertPasswordReady();
   if (!fs.existsSync(path.join(dataDir, 'data.db')) || !fs.existsSync(path.join(dataDir, 'config.json'))) throw new Error('当前数据尚未初始化，无法创建完整备份');
   const names = walkData(dataDir);
   if (names.length > MAX_FILES) throw new Error('数据文件过多');
@@ -181,6 +188,7 @@ async function captureData(dataDir, appVersion, sourceLabel = '寰宇运维') {
     for (const [name, content] of fixedFiles) {
       if (!fs.existsSync(path.join(dataDir, name)) || !content.equals(fs.readFileSync(path.join(dataDir, name)))) throw new Error('备份期间配置或文件发生变化，请停止相关操作后重试');
     }
+    assertPasswordReady();
     const payload = { createdAt: new Date().toISOString(), appVersion, schemaRevision: access()?.revision || 0, sourceLabel, files };
     validatePayload(payload);
     return payload;

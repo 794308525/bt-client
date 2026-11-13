@@ -1,5 +1,6 @@
 const sqlite3 = require('better-sqlite3')
 const fs = require('fs')
+const path = require('path')
 const Ps = require('ee-core/ps');
 const CryptoJS = require('crypto-js');
 const { processPaths } = require('./application-data');
@@ -8,6 +9,10 @@ const IS_CHECK_TABLE = {status:false}
 
 class Sqlite {
     constructor({ initializeSchema = true } = {}) {
+        const paths = processPaths();
+        if (paths?.coordinationDir && fs.existsSync(path.join(paths.coordinationDir, 'password-change.json'))) {
+            throw new Error('密码设置尚未恢复，请重新打开应用');
+        }
         this.DB_PATH = processPaths()?.dataDir || Ps.getRootDir() + '/data'
         this.DB_FILE = ''
         this.DB_OBJ = null

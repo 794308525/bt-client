@@ -46,9 +46,7 @@ class UserService extends Service {
      */
     get_bind_info() {
         let client_id_file = pub.get_data_path() + '/user.json';
-        if (!pub.is_file(client_id_file)) {
-            this.get_client_id();
-        }
+        if (!pub.is_file(client_id_file)) return {};
         let f_body = pub.read_file(client_id_file);
         let f_json = JSON.parse(f_body);
         return f_json;

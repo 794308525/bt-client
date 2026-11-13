@@ -2,9 +2,14 @@
 const { Controller } = require('ee-core');
 const { pub } = require("../class/public.js");
 const path = require('path');
+const fs = require('fs');
 const Services = require('ee-core/services');
 const autoUpdater = process.mas ? null : require('electron-updater').autoUpdater;
-const { exclusive } = require('../class/application-data');
+const { exclusive, updateJson, processPaths } = require('../class/application-data');
+const { passwordConfig, applyPasswordConfig, writePasswordJournal, removePasswordJournal } = require('../class/password-change');
+const { Sqlite } = require('../class/sqlite');
+const crypto = require('crypto');
+const { app, dialog } = require('electron');
 
 
 class IndexController extends Controller {
@@ -123,16 +128,12 @@ class IndexController extends Controller {
         if(password){
             return pub.send_success_msg(event,channel,pub.lang('已设置管理密码'))
         }else{
-
-            args.data = {
-                password: pub.random_string(16)
-            }
-            await this.set_password(args)
-            if (pub.C('password')){
-                return pub.send_success_msg(event,channel,pub.lang('已设置管理密码'))
-            }
             return pub.send_error_msg(event,channel,pub.lang('未设置管理密码'))
         }
+    }
+
+    async skip_password(args, event) {
+        return IndexController.prototype.set_password.call(this, { ...args, data: { skip: true } }, event);
     }
 
     /**
@@ -147,58 +148,87 @@ class IndexController extends Controller {
     async set_password(args,event) {
       try { return await exclusive(async () => {
             let channel = args.channel;
-            let password = args.data.password;
+            const skip = args.data.skip === true;
+            const existingPassword = pub.C('password');
+            if (skip && existingPassword) return pub.send_error_msg(event, channel, pub.lang('管理密码已经设置'));
+            if (existingPassword && !global.password_hash) return pub.send_error_msg(event, channel, pub.lang('请先解锁应用'));
+            let password = skip ? crypto.randomBytes(24).toString('hex') : args.data.password;
             if(!password){
                 return pub.send_error_msg(event,channel,pub.lang('密码不能为空'))
             }
             if(password.length < 8){
                 return pub.send_error_msg(event,channel,pub.lang('密码长度不能小于8位'))
             }
-            let salt = pub.C('password_salt')
-            if(!salt){
-                salt = pub.random_string(16)
-                pub.C('password_salt',salt)
-            }
+            let salt = pub.C('password_salt') || crypto.randomBytes(16).toString('hex');
             let password_hash = pub.md5(pub.md5(password)+salt)
-            pub.C('password',password_hash)
-
-            // 解密所有信息
-            pub.M('panel_info').decryptAll();
-            pub.M('ssh_info').decryptAll();
-            pub.M('proxy_info').decryptAll();
-            pub.M('aliyun_account').decryptAll();
-            pub.M('aliyun_ssh_credential').decryptAll();
-            pub.M('tencent_ssh_credential').decryptAll();
-            pub.M('tencent_account').decryptAll();
-            pub.M('cloudflare_account').decryptAll();
-            pub.M('ssl_channel').decryptAll();
-            pub.M('site_check_request_detail').decryptAll();
-            pub.M('qps_test_task').decryptAll();
-
-            // 保存密码加密方式
-            if(!pub.C('init_password') || pub.C('not_password') === true){
-                pub.C('init_password',pub.aes_default_encrypt(password))
-                pub.C('not_password',true);
-                pub.C('password_hash',password_hash)
+            const configFile = path.join(pub.get_data_path(), 'config.json');
+            const previousConfig = pub.config_get();
+            const previousHash = global.password_hash;
+            const nextConfig = { ...previousConfig, password_salt: salt, password: password_hash, password_setup_skipped: skip };
+            delete nextConfig.init_password;
+            if (!existingPassword || previousConfig.password_setup_skipped === true) {
+                nextConfig.not_password = skip;
+                nextConfig.password_hash = skip ? password_hash : '';
+            } else if (nextConfig.not_password === true) {
+                nextConfig.password_hash = password_hash;
+            } else {
+                nextConfig.password_hash = '';
             }
-
+            const tables = ['panel_info', 'ssh_info', 'proxy_info', 'aliyun_account', 'aliyun_ssh_credential',
+                'tencent_ssh_credential', 'tencent_account', 'cloudflare_account', 'ssl_channel',
+                'site_check_request_detail', 'qps_test_task'];
+            const paths = processPaths();
+            if (!paths || !paths.coordinationDir) throw new Error('无法确定数据目录');
+            if (fs.existsSync(path.join(paths.coordinationDir, 'password-change.json'))) throw new Error('密码设置尚未恢复，请重新打开应用');
+            const db = new Sqlite();
+            const changeId = crypto.randomBytes(16).toString('hex');
+            let committed = false;
+            db.NOT_CLONE = true;
+            try {
+                writePasswordJournal(paths, { id: changeId, previous: passwordConfig(previousConfig), next: passwordConfig(nextConfig) });
+                db.DB_OBJ.transaction(() => {
+                    for (const table of tables) {
+                        global.password_hash = previousHash;
+                        const rows = db.table(table).select();
+                        global.password_hash = password_hash;
+                        for (const row of rows) {
+                            const id = Object.keys(row)[0];
+                            db.table(table).where(id + '=?', row[id]).update(row);
+                        }
+                    }
+                    db.DB_OBJ.exec('CREATE TABLE IF NOT EXISTS password_change_state (id TEXT PRIMARY KEY)');
+                    db.DB_OBJ.prepare('DELETE FROM password_change_state').run();
+                    db.DB_OBJ.prepare('INSERT INTO password_change_state (id) VALUES (?)').run(changeId);
+                })();
+                committed = true;
+                updateJson(configFile, config => {
+                    applyPasswordConfig(config, nextConfig);
+                });
+                removePasswordJournal(paths);
+            } catch (error) {
+                global.password_hash = committed ? password_hash : previousHash;
+                if (committed) {
+                    const recoveryError = new Error('密码设置尚未完成，请重新打开应用以恢复数据');
+                    recoveryError.code = 'PASSWORD_RECOVERY_REQUIRED';
+                    throw recoveryError;
+                }
+                try { removePasswordJournal(paths); } catch (_) { /* 写入失败或启动时恢复。 */ }
+                throw error;
+            } finally {
+                db.NOT_CLONE = false;
+                db.close();
+            }
             global.password_hash = password_hash;
-
-            // 重新加密所有信息
-            pub.M('panel_info').encryptAll();
-            pub.M('ssh_info').encryptAll();
-            pub.M('proxy_info').encryptAll();
-            pub.M('aliyun_account').encryptAll();
-            pub.M('aliyun_ssh_credential').encryptAll();
-            pub.M('tencent_ssh_credential').encryptAll();
-            pub.M('tencent_account').encryptAll();
-            pub.M('cloudflare_account').encryptAll();
-            pub.M('ssl_channel').encryptAll();
-            pub.M('site_check_request_detail').encryptAll();
-            pub.M('qps_test_task').encryptAll();
         
             return pub.send_success_msg(event,channel,pub.lang('管理密码设置成功'))
-      }); } catch (error) { return pub.send_error_msg(event, args.channel, error.message); }
+      }); } catch (error) {
+          if (error.code === 'PASSWORD_RECOVERY_REQUIRED') {
+              try { dialog.showErrorBox(pub.lang('密码设置尚未完成'), pub.lang(error.message)); }
+              finally { app.exit(1); }
+              return;
+          }
+          return pub.send_error_msg(event, args.channel, pub.lang(error.message));
+      }
     }
 
 
@@ -322,6 +352,10 @@ class IndexController extends Controller {
         // 不再向前端提供已停用的同步设置及密码。
         delete data.sync_cloud;
         delete data.sync_password;
+        delete data.password;
+        delete data.password_salt;
+        delete data.password_hash;
+        delete data.init_password;
 
         data.version = pub.getVersion();
 
@@ -345,7 +379,7 @@ class IndexController extends Controller {
         if(key === 'sync_cloud' || key === 'sync_password'){
             return pub.send_error_msg(event,channel,pub.lang('宝塔账号数据同步功能已停用'));
         }
-        if (['password', 'password_salt', 'password_hash', 'not_password', 'init_password'].includes(key)) {
+        if (['password', 'password_salt', 'password_hash', 'not_password', 'init_password', 'password_setup_skipped'].includes(key)) {
             return pub.send_error_msg(event,channel,pub.lang('请通过管理密码入口修改认证设置'));
         }
         try { pub.config_set(key,value); }

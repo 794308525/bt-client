@@ -18,6 +18,10 @@ class BackupController extends Controller {
     if (!Electron.mainWindow || event.sender.id !== Electron.mainWindow.webContents.id || !global.password_hash) {
       return pub.send_error_msg(event, args.channel, pub.lang('请先在主窗口解锁应用'));
     }
+    const paths = access()?.paths;
+    if (paths && fs.existsSync(path.join(paths.coordinationDir, 'password-change.json'))) {
+      return pub.send_error_msg(event, args.channel, pub.lang('密码设置尚未恢复，请重新打开应用'));
+    }
     if (busy) return pub.send_error_msg(event, args.channel, pub.lang('正在处理备份，请稍候'));
     busy = true;
     try {

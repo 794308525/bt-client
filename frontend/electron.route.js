@@ -3261,6 +3261,11 @@ const routes = {
 				},
 			},
 		},
+		skip_password: {
+			title: '暂不设置管理密码',
+			method: 'ipc',
+			path: 'controller.index.skip_password',
+		},
 		set_password: {
 			title: '设置管理密码',
 			method: 'ipc',

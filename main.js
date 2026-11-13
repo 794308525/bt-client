@@ -16,11 +16,14 @@ const coordinator = configure(paths);
 const Ps = require('ee-core/ps');
 Ps.getRootDir = () => paths.runtimeDir;
 const { applyPendingRestore } = require(`${sourceRoot}/class/data-backup`);
+const { recoverPasswordChange, removeLegacyPassword } = require(`${sourceRoot}/class/password-change`);
 let canStart = true;
 if (gotLock) {
   try {
     coordinator.enter(alone => {
+      if (alone) recoverPasswordChange(paths);
       if (alone) applyPendingRestore(paths);
+      if (alone) removeLegacyPassword(paths);
       const { Sqlite } = require(`${sourceRoot}/class/sqlite`);
       new Sqlite({ initializeSchema: alone }).close();
     });

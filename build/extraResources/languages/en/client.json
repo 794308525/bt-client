@@ -243,5 +243,12 @@
     "b20fc52b828bae58dd1cbcc4835e2381": "No upload path detected",
     "11fad14ad445005a3a5f662f34067f29": "Only one file is allowed to be uploaded",
     "b9c1a2d18c36490b0087d0a93a1ccc77": "Please select the file to be sent to the server",
-    "b24be5a63f383c42ba0b1e29e7d66b28": "Please select the save directory"
+    "b24be5a63f383c42ba0b1e29e7d66b28": "Please select the save directory",
+    "ccc3ba879697a37411067264fb4b9204": "Set an app password",
+    "f1a14749e18f2067700ecd1d498f3f19": "Set a password to unlock the app each time it opens. You can skip this step and set one later in Settings.",
+    "66dbfb15070c94c6d23daec5794fdd30": "Not now",
+    "f114c73fd61a1635d201ddd29a9846fe": "Set password",
+    "c60a1aa027a229bb7bad312019ae175c": "Setup failed. Please try again.",
+    "b09956b6624986c1b05d0da89d31e0aa": "Unable to initialize the app. Please reopen it and try again.",
+    "5f26be784ac0bc9b27a750ec0f4c6951": "Show password"
 }

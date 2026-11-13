@@ -5,7 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 // 数据结构调整时同步递增；不同结构的程序不得同时使用同一份数据。
-const SCHEMA_REVISION = 2;
+const SCHEMA_REVISION = 3;
 let current = null;
 const heldLocks = new Set();
 // 此模块也由渲染进程的预加载脚本引用，不能在加载时依赖受限的浏览器全局对象。
@@ -145,6 +145,7 @@ class DataAccess {
       const peers = this.peers();
       if (peers.some(peer => peer.legacy)) throw new Error('正在运行的旧安装版尚不支持共享数据，请先退出旧版；同时运行需更新本地安装版');
       if (peers.some(peer => peer.revision !== this.revision)) throw new Error('两个版本的数据结构不兼容，请先退出另一版本再启动');
+      if (peers.length && fs.existsSync(path.join(this.paths.coordinationDir, 'password-change.json'))) throw new Error('密码修改尚未恢复，请先退出另一版本再启动');
       if (peers.length && fs.existsSync(path.join(this.paths.stateDir, 'pending.json'))) throw new Error('有待恢复的数据，请先退出另一版本再启动');
       const schema = readJson(path.join(this.paths.coordinationDir, 'schema.json'), { revision: 0 });
       if (schema.revision > this.revision) throw new Error('数据已由更新版本升级，请升级当前程序');
@@ -162,6 +163,7 @@ class DataAccess {
   async exclusive(action) {
     this.gate(() => {
       this.checkMaintenance();
+      if (fs.existsSync(path.join(this.paths.coordinationDir, 'password-change.json'))) throw new Error('密码设置尚未恢复，请重新打开应用');
       if (fs.existsSync(this.maintenanceFile)) throw new Error('正在处理数据恢复或密码修改，请稍候');
       this.assertAlone();
       atomicJson(this.maintenanceFile, { id: this.id, pid: process.pid });

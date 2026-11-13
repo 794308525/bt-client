@@ -231,5 +231,10 @@
     "36f896ff6930d433a2a885c4402f12a6": "The application has been reloaded",
     "447374227683c82c70bf8e44bca69465": "The download task has been canceled",
     "6a8ca6a2eb112eb7b1d5145b478c1b88": "Proxy server started: {}: {}",
-    "9a43eefa909fdbdecd67e9205b883f14": "Failed to retrieve group list:"
+    "9a43eefa909fdbdecd67e9205b883f14": "Failed to retrieve group list:",
+    "3ab7f82fd9c2e912141f961beb00cc1f": "Password setup was interrupted. Reopen the app to recover your data.",
+    "0dd619b54c63e04742fdabdc29aea464": "Password setup needs to be recovered. Please reopen the app.",
+    "fbc23d8e336d874f67bca3cb4c58d324": "An app password has already been set.",
+    "ff7e1f59c20760e8cc81880a648dba80": "Please unlock the app first.",
+    "2ea07e4e0b2124248306b7325bcc6e93": "Password setup is incomplete"
 }

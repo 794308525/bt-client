@@ -18,44 +18,35 @@ export const useUserStore = defineStore('userStore', {
 	getters: {},
 	actions: {
 		// 获取绑定用户
-		getBindUser() {
-			return new Promise((resolve, reject) => {
-				common.send(routes.user.get_user_info.path, {}, (res: any) => {
-					this.isLogin = res.status
-					if (res.status) {
-						this.info = res.data
-					} else {
-						this.info = {
-							username: '',
-						}
-					}
-					resolve(res)
-				})
-			})
+		async getBindUser() {
+			try {
+				const res: any = await common.sendAsync({ route: routes.user.get_user_info.path, data: {}, timeout: 5000 })
+				this.isLogin = res.status
+				this.info = res.status ? res.data : { username: '' }
+				return res
+			} catch (_) {
+				this.isLogin = false
+				this.info = { username: '' }
+				return { status: false }
+			}
 		},
 		//管理密码是否正确
 		updateLockScreen(value: boolean) {
 			this.passwordIsRight = value
 		},
 		// 获取管理密码状态
-		getAdminPassword() {
-			return new Promise((resolve, reject) => {
-				common.send(routes.index.has_password.path, {}, (res: any) => {
-					this.isSetAdminPassword = res.status
-					resolve(res)
-				})
-			})
+		async getAdminPassword() {
+			const res: any = await common.sendAsync({ route: routes.index.has_password.path, data: {}, timeout: 10000 })
+			if (typeof res?.status !== 'boolean') throw new Error('无法读取管理密码状态')
+			this.isSetAdminPassword = res.status
+			return res
 		},
 		// 是否免管理密码
-		isFreeAdminPassword() {
-			return new Promise((resolve, reject) => {
-				common.send(routes.index.get_config.path, {}, (res: any) => {
-					if (res.data.not_password) {
-						this.passwordIsRight = true
-					}
-					resolve(res)
-				})
-			})
+		async isFreeAdminPassword() {
+			const res: any = await common.sendAsync({ route: routes.index.get_config.path, data: {}, timeout: 10000 })
+			if (!res?.status || !res.data) throw new Error('无法读取应用设置')
+			if (res.data.not_password) this.passwordIsRight = true
+			return res.data
 		},
 		// 登录时判断
 		// isLoginStatus() {

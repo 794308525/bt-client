@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Router } from 'vue-router'
 import { storeToRefs } from 'pinia'
+import { ElMessage } from 'element-plus'
+import { pub } from '@/utils/tools'
 
 const whiteList = ['/login', '/lock'] // 定义白名单  所有不受权限控制的页面
 const history = ['/home', '/setting', '/xterm', '/aliyun', '/tencent', '/cloudflare', '/toolbox']
@@ -15,8 +17,8 @@ export default (router: Router) => {
 				isOverlay = true
 			}
 		})
-		if (isOverlay) {
-			return
+		if (isOverlay && _from.path !== '/lock') {
+			return next(false)
 		}
 
 		const { useUserStore } = await import('@/store/user')
@@ -37,16 +39,18 @@ export default (router: Router) => {
 		} else if (whiteList.includes(to.path)) {
 			next()
 		} else {
-			await userStores.getBindUser() // 获取用户信息
-			await userStores.getAdminPassword() // 获取管理密码状态
-			const config: any = await userStores.isFreeAdminPassword() // 是否免管理密码
-
-			if (config.not_password) {
-				let path = userStore.routerHistory.value
-				path = path === '/' ? '/home' : path
-				next(path)
-			} else {
+			try {
+				const password: any = await userStores.getAdminPassword()
+				if (!password.status) return next('/lock')
+				const config: any = await userStores.isFreeAdminPassword()
+				if (config.not_password) {
+					userStore.routerHistory.value = history.includes(to.path) || to.path.startsWith('/aliyun/') || to.path.startsWith('/tencent/') || to.path.startsWith('/cloudflare/') ? to.path : '/home'
+					return next()
+				}
 				next('/lock')
+			} catch (_) {
+				ElMessage.error(pub.lang('应用初始化失败，请重新打开应用后重试'))
+				next(false)
 			}
 			// let _status = await userStores.isLoginStatus()
 			// if (_status) {

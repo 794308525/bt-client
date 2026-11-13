@@ -32,8 +32,9 @@
 								<el-switch
 									v-model="configData.not_password"
 									:aria-label="pub.lang('免密登录')"
+									:disabled="configData.password_setup_skipped"
 									@change="hanelNotPassword" />
-								<el-button @click="handleEditManage">{{ pub.lang('修改管理密码') }}</el-button>
+								<el-button @click="handleEditManage">{{ pub.lang(configData.password_setup_skipped ? '设置管理密码' : '修改管理密码') }}</el-button>
 							</div>
 						</div>
 						<div class="setting-row">
@@ -215,10 +216,12 @@ const cacheUsagePercentage = computed(() => cacheInfo.max_bytes ? Math.min(100, 
 const configData: {
 	exit_action: string
 	not_password: boolean
+	password_setup_skipped: boolean
 	version: string
 } = reactive({
 	exit_action: 'close', // 关闭按钮
 	not_password: false, // 免密登录
+	password_setup_skipped: false,
 	version: '',
 })
 
@@ -232,9 +235,10 @@ const account = computed(() => {
 // 获取配置信息
 const getConfig = () => {
 	common.send(routes.index.get_config.path, {}, (result: any) => {
-		const { exit_action, not_password, version } = result.data
+		const { exit_action, not_password, password_setup_skipped, version } = result.data
 		configData.exit_action = exit_action || 'close'
 		configData.not_password = not_password || false
+		configData.password_setup_skipped = password_setup_skipped === true
 		configData.version = version
 	})
 }
@@ -249,7 +253,7 @@ const hanelNotPassword = async (val: any) => {
 }
 // 修改管理密码
 const handleEditManage = () => {
-	notpwRef.value.acceptParams({ isEdit: true })
+	notpwRef.value.acceptParams({ isEdit: true, isFirstSetup: configData.password_setup_skipped })
 }
 // 关闭按钮
 const handleExit = async () => {
@@ -369,7 +373,6 @@ const handleUnbind = () => {
 }
 onMounted(async () => {
 	Theme.value = dark.value ? 'darkMode' : 'lightMode'
-	await useUStore.getBindUser()
 	// 获取代理列表
 	getProxyList()
 	getCacheInfo()
