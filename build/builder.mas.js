@@ -9,6 +9,11 @@ module.exports = {
   // 每次商店出包前递增 package.json，构建号与该版本保持一致。
   buildVersion: require('../package.json').version,
   npmRebuild: false,
+  // 原生模块必须在归档外，才能由商店签名流程逐个签名并直接加载。
+  asarUnpack: [
+    '**/node_modules/better-sqlite3/**/*.node',
+    '**/node_modules/cpu-features/**/*.node',
+  ],
   directories: {
     ...base.directories,
     output: 'out/app-store',
